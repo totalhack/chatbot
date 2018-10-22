@@ -1,6 +1,8 @@
 import requests
 import uuid
 
+import usaddress
+
 from chatbot import app
 from chatbot.utils import *
 
@@ -100,14 +102,22 @@ class Action(object):
 class Slot(PrintMixin, JSONMixin):
     repr_attrs = ['name']
 
-    def __init__(self, name, prompts):
+    def __init__(self, name, prompts, entity_handler_name=None):
         self.name = name
         self.prompts = prompts
+        if entity_handler_name:
+            assert type(entity_handler_name) in (str, unicode) and entity_handler_name in globals(), 'Invalid entity handler: %s' % entity_handler_name
+        self.entity_handler_name = entity_handler_name
         self.value = None
 
     def get_prompt(self):
         prompt = random.choice(self.prompts)
         return prompt
+
+    def copy(self):
+        new_slot = Slot(self.name, self.prompts, self.entity_handler_name)
+        new_slot.value = self.value
+        return new_slot
 
 class SlotGroup(OrderedDictPlus, JSONMixin):
     def get_next_slot(self):
@@ -115,7 +125,7 @@ class SlotGroup(OrderedDictPlus, JSONMixin):
 
     def get_next_prompt(self):
         return self.get_next_slot().get_prompt()
-    
+
 class Intent(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'score']
 
@@ -135,9 +145,17 @@ class Intent(PrintMixin, JSONMixin):
 
         self.slots = SlotGroup()
         if slots:
-            for slot_name, slot_prompts in slots.items():
+            for slot_tuple in slots.items():
+                slot_name, slot_prompts, entity_handler_name = (None, None, None)
+                if len(slot_tuple) == 2:
+                    slot_name, slot_prompts = slot_tuple
+                else:
+                    slot_name, slot_prompts, entity_handler_name = slot_tuple
                 assert type(slot_prompts) in (tuple, list)
-                self.slots[slot_name] = Slot(slot_name, slot_prompts)
+
+                if (not entity_handler_name) and slot_name in SLOT_ENTITY_HANDLERS:
+                    entity_handler_name = SLOT_ENTITY_HANDLERS[slot_name]
+                self.slots[slot_name] = Slot(slot_name, slot_prompts, entity_handler_name=entity_handler_name)
 
     def get_remaining_intent_slots(self):
         return SlotGroup([(k, v) for k,v in self.slots.items() if v.value is None])
@@ -151,11 +169,36 @@ class Entity(PrintMixin, JSONMixin):
     def __init__(self, name, type, start_index, end_index, score=None, values=None):
         self.name = name
         self.type = type
-        self.slot_name = type.replace('builtin.', '') # XXX Specific to LUIS
+        self.slot_name = type
         self.start_index = start_index
         self.end_index = end_index
         self.score = score
         self.values = values
+
+class EntityHandler(JSONMixin):
+    def process(self, query, nlu_entities, translations={}):
+        entities = []
+        for entity in nlu_entities:
+            entities.append(Entity(name=entity['entity'],
+                                   type=translations.get(entity['type'], entity['type']),
+                                   start_index=entity['startIndex'],
+                                   end_index=entity['endIndex'],
+                                   score=entity.get('score', None),
+                                   values=entity.get('resolution', None)))
+        return entities
+
+class AddressEntityHandler(EntityHandler):
+    def process(self, query, nlu_entities, translations={}):
+        entities = super(AddressEntityHandler, self).process(query, nlu_entities, translations=translations)
+        address = usaddress.parse(query)
+
+        # XXX should we bother with original entities?
+        
+        import pdb; pdb.set_trace()
+
+SLOT_ENTITY_HANDLERS = {
+    'address': 'AddressEntityHandler',
+}
 
 class IntentResponse(PrintMixin, JSONMixin):
     repr_attrs = ['query', 'intents', 'entities']
@@ -179,22 +222,29 @@ class IntentResponse(PrintMixin, JSONMixin):
         return valid_intents, valid_entities
 
 class LUISResponse(IntentResponse):
-    def __init__(self, luis_json):
+    ENTITY_TRANSLATIONS = {
+        'geographyV2': 'address',
+        'builtin.personName': 'fullname',
+        'builtin.email': 'email',
+        'builtin.phonenumber': 'phonenumber'
+    }
+
+    def __init__(self, luis_json, last_tx=None):
         intents = []
         for intent in luis_json['intents']:
             name = intent['intent']
             meta = INTENT_METADATA.get(name, {})
             intents.append(Intent(intent['intent'], intent['score'], **meta))
 
-        entities = []
-        for entity in luis_json['entities']:
-            entities.append(Entity(name=entity['entity'],
-                                   type=entity['type'],
-                                   start_index=entity['startIndex'],
-                                   end_index=entity['endIndex'],
-                                   score=entity.get('score', None),
-                                   values=entity.get('resolution', None)))
+        pprint(luis_json['entities'])
 
+        entity_handler_name = 'EntityHandler'
+        if last_tx and last_tx.slot_prompted:
+            slot = last_tx.slot_prompted
+            entity_handler_name = slot.entity_handler_name or entity_handler_name
+        entity_handler = globals()[entity_handler_name]
+
+        entities = entity_handler().process(luis_json['query'], luis_json['entities'], self.ENTITY_TRANSLATIONS)
         super(LUISResponse, self).__init__(luis_json['query'], intents, entities=entities)
 
 class Transaction(JSONMixin):
@@ -205,7 +255,7 @@ class Transaction(JSONMixin):
         self.response_messages = OrderedDict()
         self.response_message_text = None
         self.slots_filled = SlotGroup()
-        self.slots_prompted = SlotGroup()
+        self.slot_prompted = None
         self.active_intent = None
         self.new_intents = []
         self.aborted_intents = []
@@ -250,7 +300,7 @@ class Transaction(JSONMixin):
     def copy_data_from_transaction(self, other_tx):
         self.response_messages = other_tx.response_messages.copy()
         self.response_message_text = other_tx.response_message_text
-        self.slots_prompted = other_tx.slots_prompted.copy()
+        self.slot_prompted = other_tx.slot_prompted.copy()
 
     def requires_answer(self):
         if self.expected_entities or self.expected_intents or self.expected_text:
@@ -285,8 +335,9 @@ class Conversation(JSONMixin):
         self.slot_attempts = OrderedDictPlus()
 
     def understand(self, tx, message):
+        last_tx = self.get_last_transaction()
         if self.nlu == 'luis':
-            intent_response = LUISResponse(luis(message))
+            intent_response = LUISResponse(luis(message), last_tx)
         else:
             assert False, 'nlu not supported: %s' % self.nlu
         dbg(vars(intent_response), color='blue')
@@ -425,7 +476,7 @@ class Conversation(JSONMixin):
                 self.abort_intent(tx, intent)
                 return
             slot_prompt = slot.get_prompt()
-            tx.slots_prompted[slot.name] = slot
+            tx.slot_prompted = slot
 
         if response: tx.add_response_message('%s:%s' % (intent.name, response_type), response)
         if slot_prompt: tx.add_response_message('%s:%s' % (intent.name, slot.name), slot_prompt)
@@ -503,7 +554,7 @@ class Conversation(JSONMixin):
                     self.abort_intent(tx, intent)
                     return
                 slot_prompt = slot.get_prompt()
-                tx.slots_prompted[slot.name] = slot
+                tx.slot_prompted = slot
                 tx.add_response_message('%s:%s' % (self.active_intent.name, slot.name), slot_prompt)
                 return
             else:
@@ -555,12 +606,3 @@ class Conversation(JSONMixin):
         self.process_intent_response(tx, intent_response)
         response_message = tx.format_response_message()
         return response_message
-
-
-                                 
-    
-                    
-                
-            
-                        
-    
