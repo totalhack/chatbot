@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import requests
 import uuid
 
@@ -191,10 +192,31 @@ class AddressEntityHandler(EntityHandler):
     def process(self, query, nlu_entities, translations={}):
         entities = super(AddressEntityHandler, self).process(query, nlu_entities, translations=translations)
         address = usaddress.parse(query)
-
-        # XXX should we bother with original entities?
         
-        import pdb; pdb.set_trace()
+        if not address:
+            return entities
+
+        address_dict = OrderedDict([(v,k) for k,v in address])
+
+        address_parts = []
+        for label in usaddress.LABELS:
+            if label in ['Recipient', 'NotAddress']:
+                continue
+            part = address_dict.get(label, None)
+            if not part:
+                continue
+            address_parts.append(part)
+
+        address_value = ' '.join(address_parts)
+        address_entity = Entity(name='address',
+                                type='address',
+                                start_index=None,
+                                end_index=None,
+                                score=None,
+                                values=address_value)
+
+        entities.append(address_entity)
+        return entities
 
 SLOT_ENTITY_HANDLERS = {
     'address': 'AddressEntityHandler',
@@ -300,7 +322,9 @@ class Transaction(JSONMixin):
     def copy_data_from_transaction(self, other_tx):
         self.response_messages = other_tx.response_messages.copy()
         self.response_message_text = other_tx.response_message_text
-        self.slot_prompted = other_tx.slot_prompted.copy()
+        self.slot_prompted = None
+        if other_tx.slot_prompted:
+            self.slot_prompted = other_tx.slot_prompted.copy()
 
     def requires_answer(self):
         if self.expected_entities or self.expected_intents or self.expected_text:
