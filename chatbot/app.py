@@ -1,5 +1,6 @@
 from cachetools import TTLCache
 from collections import OrderedDict
+import json
 
 from flask import render_template, request, Response
 import requests
@@ -22,20 +23,19 @@ def home():
 def chat():
     debug = request.values.get('debug', None)
     try:
-        message = request.form['text']
-        conversation_id = request.values.get('conversation_id', None)
-        assert conversation_id, 'Conversation ID missing'
+        input = json.loads(request.values['input'])
+        conversation_id = request.values['conversation_id']
         dbg('Conversation ID: %s' % conversation_id, color='green')
-        dbg('Message: %s' % message, color='green')
+        dbg('Input: %s' % input, color='green')
 
         convo = CONVO_CACHE.get(conversation_id, None)
         if not convo:
             dbg('Creating new conversation', color='green')
             convo = Conversation(conversation_id)
 
-        tx = convo.create_transaction(message)
+        tx = convo.create_transaction()
 
-        reply = convo.reply(tx, message)
+        reply = convo.reply(tx, input)
         dbg('Replying: %s' % reply, color='green')
         
         CONVO_CACHE[conversation_id] = convo

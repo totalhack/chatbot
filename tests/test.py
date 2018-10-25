@@ -1,3 +1,4 @@
+import json
 from pprint import pprint
 import random
 import requests
@@ -6,10 +7,11 @@ import unittest
 from chatbot import app
 TESTS = app.config.get('TESTS', {})
 
-def make_request(text, convo_id=None):
-    params = {'debug': 1}
-    if convo_id: params['conversation_id'] = convo_id
-    resp = requests.post('http://127.0.0.1:9000/chat', params=params, data={'text': text})
+def make_request(input_data, convo_id=None):
+    data = {'debug': 1}
+    if convo_id: data['conversation_id'] = convo_id
+    data['input'] = json.dumps(input_data)
+    resp = requests.post('http://127.0.0.1:9000/chat', data=data)
     resp.raise_for_status()
     if 'Something went wrong' in resp.content:
         print resp.json()['error']
@@ -29,10 +31,10 @@ class TestChatBotMeta(type):
             dict[test_name] = gen_test(convo)
 
         return type.__new__(mcs, name, bases, dict)
-    
+
 class TestChatBot(unittest.TestCase):
     __metaclass__ = TestChatBotMeta
-    
+
     def setUp(self):
         self.convo_id = random.randint(0, 1E7)
 
@@ -45,14 +47,16 @@ class TestChatBot(unittest.TestCase):
             expected_intent = None
             expected_message_name = None
             if len(message_tuple) == 1:
-                line = message_tuple
-            if len(message_tuple) == 2:
-                line, expected_intent = message_tuple
-            if len(message_tuple) == 3:
-                line, expected_intent, expected_message_name = message_tuple
+                input_data = message_tuple[0]
+            elif len(message_tuple) == 2:
+                input_data, expected_intent = message_tuple
+            elif len(message_tuple) == 3:
+                input_data, expected_intent, expected_message_name = message_tuple
+            else:
+                assert False, 'Invalid message tuple: %s' % message_tuple
 
-            print '\n---- USER: %s' % line
-            resp = make_request(line, convo_id=self.convo_id)
+            print '\n---- USER: %s' % input_data
+            resp = make_request(input_data, convo_id=self.convo_id)
             data = resp.json()
             print 'BOT:', data['response']
             if expected_intent:

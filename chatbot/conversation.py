@@ -43,7 +43,7 @@ COMMON_MESSAGES = {
 
     'goodbye': [
         "Thanks. Have a nice day!"
-    ]   
+    ]
 }
 
 INTENT_METADATA = {
@@ -192,7 +192,7 @@ class AddressEntityHandler(EntityHandler):
     def process(self, query, nlu_entities, translations={}):
         entities = super(AddressEntityHandler, self).process(query, nlu_entities, translations=translations)
         address = usaddress.parse(query)
-        
+
         if not address:
             return entities
 
@@ -225,12 +225,12 @@ SLOT_ENTITY_HANDLERS = {
 class IntentResponse(PrintMixin, JSONMixin):
     repr_attrs = ['query', 'intents', 'entities']
 
-    def __init__(self, query, intents, entities=None):
+    def __init__(self, query, intents, entities=[]):
         self.query = query
         assert intents
         self.intents = sorted(intents, key=lambda x: x.score, reverse=True)
         self.top_intent = self.intents[0]
-        self.entities = entities
+        self.entities = entities or []
 
     def filter_intents(self, score):
         return [x for x in self.intents if x.score > score]
@@ -242,6 +242,14 @@ class IntentResponse(PrintMixin, JSONMixin):
         valid_intents = self.filter_intents(intent_threshold)
         valid_entities = self.filter_entities(entity_threshold)
         return valid_intents, valid_entities
+
+class TriggeredIntentResponse(IntentResponse):
+    def __init__(self, intent_name):
+        assert intent_name in INTENT_METADATA, 'Invalid intent name: %s' % intent_name
+        meta = INTENT_METADATA[intent_name]
+        score = 1
+        intents = [Intent(intent_name, score, **meta)]
+        super(TriggeredIntentResponse, self).__init__(None, intents, entities=None)
 
 class LUISResponse(IntentResponse):
     ENTITY_TRANSLATIONS = {
@@ -269,10 +277,33 @@ class LUISResponse(IntentResponse):
         entities = entity_handler().process(luis_json['query'], luis_json['entities'], self.ENTITY_TRANSLATIONS)
         super(LUISResponse, self).__init__(luis_json['query'], intents, entities=entities)
 
+class Input(PrintMixin, JSONMixin):
+    repr_attrs = ['type', 'value']
+    types = [
+        'text',
+        'intent'
+    ]
+
+    def __init__(self, input):
+        self.raw_input = input
+        self.type = None
+        self.value = None
+
+        if type(input) in (str, unicode):
+            self.type = 'text'
+            self.value = input
+        elif type(input) == dict:
+            self.type = input['type']
+            self.value = input['value']
+        else:
+            assert False, 'Invalid input: %s' % input
+
+        assert self.type in self.types, 'Invalid input type: %s' % self.type
+
 class Transaction(JSONMixin):
-    def __init__(self, request_message):
+    def __init__(self):
         self.id = str(uuid.uuid4())
-        self.request_message = request_message
+        self.input = None
         self.intent_response = None
         self.response_messages = OrderedDict()
         self.response_message_text = None
@@ -331,7 +362,7 @@ class Transaction(JSONMixin):
             return True
         return False
 
-    def is_answered(self, entities, intents, text):
+    def is_answered(self, entities, intents, input):
         if not self.requires_answer():
             return True, None
 
@@ -358,12 +389,19 @@ class Conversation(JSONMixin):
         self.active_intent = None
         self.slot_attempts = OrderedDictPlus()
 
-    def understand(self, tx, message):
+    def understand(self, tx, input):
         last_tx = self.get_last_transaction()
-        if self.nlu == 'luis':
-            intent_response = LUISResponse(luis(message), last_tx)
+
+        if input.type == 'intent':
+            intent_response = TriggeredIntentResponse(input.value)
+        elif input.type == 'text':
+            if self.nlu == 'luis':
+                intent_response = LUISResponse(luis(input.value), last_tx)
+            else:
+                assert False, 'nlu not supported: %s' % self.nlu
         else:
-            assert False, 'nlu not supported: %s' % self.nlu
+            assert False, 'Invalid input: %s' % input
+
         dbg(vars(intent_response), color='blue')
         tx.intent_response = intent_response
         return intent_response
@@ -546,7 +584,7 @@ class Conversation(JSONMixin):
         # Handle transactional questions that require answers
         # TODO: combine with slot logic?
         if last_tx and last_tx.requires_answer():
-            is_answered, action = last_tx.is_answered(valid_entities, valid_intents, tx.request_message)
+            is_answered, action = last_tx.is_answered(valid_entities, valid_intents, tx.input)
             if is_answered:
                 dbg('Last TX answered', color='white')
                 if action == Action.NONE:
@@ -620,13 +658,15 @@ class Conversation(JSONMixin):
             warn('no valid intents found')
         self.create_response_message(tx, valid_intents, valid_entities)
 
-    def create_transaction(self, request_message):
-        tx = Transaction(request_message)
+    def create_transaction(self):
+        tx = Transaction()
         self.transactions[tx.id] = tx
         return tx
 
-    def reply(self, tx, request_message):
-        intent_response = self.understand(tx, request_message)
+    def reply(self, tx, input):
+        input = Input(input)
+        tx.input = input
+        intent_response = self.understand(tx, input)
         self.process_intent_response(tx, intent_response)
         response_message = tx.format_response_message()
         return response_message
