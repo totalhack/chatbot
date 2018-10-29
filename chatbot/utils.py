@@ -79,6 +79,9 @@ class JSONMixin(object):
     def to_json(self):
         return self.__dict__
 
+    def to_jsons(self):
+        return json.dumps(self.__dict__)
+
 class PrintMixin(object):
     repr_attrs = []
 

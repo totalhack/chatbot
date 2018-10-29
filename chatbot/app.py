@@ -7,8 +7,8 @@ import requests
 import traceback
 
 from chatbot import app
-from chatbot.utils import *
 from chatbot.conversation import *
+from chatbot.utils import *
 
 # TODO: replace with an external cache
 CACHE_SIZE = 100
@@ -24,24 +24,35 @@ def chat():
     debug = request.values.get('debug', None)
     try:
         input = json.loads(request.values['input'])
-        conversation_id = request.values['conversation_id']
-        dbg('Conversation ID: %s' % conversation_id, color='green')
+        convo_id = request.values.get('conversation_id', None)
+        dbg('Conversation ID: %s' % convo_id, color='green')
         dbg('Input: %s' % input, color='green')
 
-        convo = CONVO_CACHE.get(conversation_id, None)
-        if not convo:
+        if convo_id:
+            convo = CONVO_CACHE.get(convo_id, None)
+            if not convo:
+                response = {'status': 'error', 'response': 'No conversation found for ID %s' % convo_id}
+                return jsonr(response)
+        else:
             dbg('Creating new conversation', color='green')
-            convo = Conversation(conversation_id)
+            convo = Conversation()
+            convo_id = convo.id
 
         tx = convo.create_transaction()
 
         reply = convo.reply(tx, input)
         dbg('Replying: %s' % reply, color='green')
-        
-        CONVO_CACHE[conversation_id] = convo
-        response = {'status': 'success', 'response': reply}
+
+        convo.save()
+        tx.save()
+
+        CONVO_CACHE[convo_id] = convo
+        response = {'status': 'success',
+                    'response': reply,
+                    'conversation_id': convo_id,
+                    'transaction_id': tx.id}
         if debug:
-            response['tx'] = tx
+            response['transaction'] = tx
         return jsonr(response)
 
     except Exception, e:
@@ -53,4 +64,4 @@ def chat():
 
 if __name__ == "__main__":
     app.run(port=9000)
-    
+

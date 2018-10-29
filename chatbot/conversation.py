@@ -5,6 +5,7 @@ import uuid
 import usaddress
 
 from chatbot import app
+from chatbot.model import *
 from chatbot.utils import *
 
 INTENT_FILTER_THRESHOLD = 0.50
@@ -300,8 +301,23 @@ class Input(PrintMixin, JSONMixin):
 
         assert self.type in self.types, 'Invalid input type: %s' % self.type
 
-class Transaction(JSONMixin):
-    def __init__(self):
+class Transaction(JSONMixin, SaveMixin):
+    save_attrs = ['id',
+                  'conversation_id',
+                  'input',
+                  'response_message_text',
+                  'slots_filled',
+                  'slot_prompted',
+                  'active_intent',
+                  'new_intents',
+                  'aborted_intents',
+                  'completed_intent',
+                  'expected_entities',
+                  'expected_intents',
+                  'expected_text']
+
+    def __init__(self, conversation_id):
+        self.conversation_id = conversation_id
         self.id = str(uuid.uuid4())
         self.input = None
         self.intent_response = None
@@ -316,6 +332,11 @@ class Transaction(JSONMixin):
         self.expected_entities = None
         self.expected_intents = None
         self.expected_text = None
+
+    def save(self):
+        tx = Transactions(id=self.id, conversation_id=self.conversation_id, data=json.dumps(self.get_save_data()))
+        db.session.merge(tx)
+        db.session.commit()
 
     def add_filled_slot(self, intent, entity):
         self.slots_filled[intent.name] = entity
@@ -378,16 +399,29 @@ class Transaction(JSONMixin):
         dbg('Transaction went unanswered', color='blue')
         return False, None
 
-class Conversation(JSONMixin):
-    def __init__(self, conversation_id, nlu='luis'):
-        self.id = conversation_id
-        self.nlu = 'luis'
+class Conversation(JSONMixin, SaveMixin):
+    save_attrs = ['id',
+                  'nlu',
+                  'intents',
+                  'active_intents',
+                  'completed_intents',
+                  'active_intent',
+                  'slot_attempts']
+
+    def __init__(self, nlu='luis'):
+        self.id = str(uuid.uuid4())
+        self.nlu = nlu
         self.transactions = OrderedDictPlus()
         self.intents = OrderedDictPlus()
         self.active_intents = OrderedDictPlus()
         self.completed_intents = OrderedDictPlus()
         self.active_intent = None
         self.slot_attempts = OrderedDictPlus()
+
+    def save(self):
+        convo = Conversations(id=self.id, data=json.dumps(self.get_save_data()))
+        db.session.merge(convo)
+        db.session.commit()
 
     def understand(self, tx, input):
         last_tx = self.get_last_transaction()
@@ -598,7 +632,7 @@ class Conversation(JSONMixin):
                 tx.copy_data_from_transaction(last_tx)
                 return
 
-        # All oneopff and preemptive intents should have been handled before this
+        # All one-off and preemptive intents should have been handled before this
         for intent in self.active_intents.values():
             if intent.is_answer:
                 dbg('Removing is_answer intents from active list: %s' % intent.name, color='white')
@@ -659,7 +693,7 @@ class Conversation(JSONMixin):
         self.create_response_message(tx, valid_intents, valid_entities)
 
     def create_transaction(self):
-        tx = Transaction()
+        tx = Transaction(self.id)
         self.transactions[tx.id] = tx
         return tx
 

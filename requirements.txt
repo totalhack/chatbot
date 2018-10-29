@@ -1,4 +1,6 @@
-flask
 cachetools
+flask
+flask-sqlalchemy
 requests
 usaddress
+mysql-python

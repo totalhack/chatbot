@@ -36,7 +36,7 @@ class TestChatBot(unittest.TestCase):
     __metaclass__ = TestChatBotMeta
 
     def setUp(self):
-        self.convo_id = random.randint(0, 1E7)
+        self.convo_id = None
 
     def tearDown(self):
         self.convo_id = None
@@ -58,12 +58,19 @@ class TestChatBot(unittest.TestCase):
             print '\n---- USER: %s' % input_data
             resp = make_request(input_data, convo_id=self.convo_id)
             data = resp.json()
+            assert data['status'] == 'success', 'Error: %s' % data
             print 'BOT:', data['response']
+
+            if not self.convo_id:
+                self.convo_id = data['conversation_id']
+            else:
+                assert self.convo_id == data['conversation_id'], 'Conversation ID mismatch'
+
             if expected_intent:
-                top_intent = data['tx']['intent_response']['top_intent']['name']
+                top_intent = data['transaction']['intent_response']['top_intent']['name']
                 self.assertEqual(top_intent, expected_intent)
             if expected_message_name:
-                message_name = data['tx']['response_messages'].keys()[0]
+                message_name = data['transaction']['response_messages'].keys()[0]
                 self.assertEqual(message_name, expected_message_name)
 
 if __name__ == '__main__':
