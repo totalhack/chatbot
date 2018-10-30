@@ -6,12 +6,13 @@ import unittest
 
 from chatbot import app
 TESTS = app.config.get('TESTS', {})
+TEST_BASE_URL = app.config.get('TEST_BASE_URL', 'http://127.0.0.1:9000')
 
 def make_request(input_data, convo_id=None):
     data = {'debug': 1}
     if convo_id: data['conversation_id'] = convo_id
     data['input'] = json.dumps(input_data)
-    resp = requests.post('http://127.0.0.1:9000/chat', data=data)
+    resp = requests.post(TEST_BASE_URL + '/chat', data=data)
     resp.raise_for_status()
     if 'Something went wrong' in resp.content:
         print resp.json()['error']

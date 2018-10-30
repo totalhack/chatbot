@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.ext.declarative import declared_attr 
+from sqlalchemy.ext.declarative import declared_attr
 
 from chatbot import app
 
@@ -32,6 +32,15 @@ class Transactions(TimestampMixin, db.Model):
     id = db.Column(db.String(50), primary_key=True, autoincrement=False)
     conversation_id = db.Column(db.String(50), db.ForeignKey('conversations.id'), nullable=False)
     conversation = db.relationship('Conversations', backref=db.backref('transactions', lazy=True))
+    data = db.Column(db.Text, nullable=False)
+
+class Fulfillments(TimestampMixin, db.Model):
+    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    conversation_id = db.Column(db.String(50), db.ForeignKey('conversations.id'), nullable=False)
+    conversation = db.relationship('Conversations', backref=db.backref('fulfillments', lazy=True))
+    url = db.Column(db.String(400), nullable=False)
+    status_code = db.Column(db.Integer, nullable=False)
+    status_message = db.Column(db.Text, nullable=False)
     data = db.Column(db.Text, nullable=False)
 
 if __name__ == '__main__':

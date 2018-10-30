@@ -102,7 +102,7 @@ class Action(object):
     END_CONVERSATION = 'end_conversation'
 
 class Slot(PrintMixin, JSONMixin):
-    repr_attrs = ['name']
+    repr_attrs = ['name', 'value']
 
     def __init__(self, name, prompts, entity_handler_name=None):
         self.name = name
@@ -131,11 +131,12 @@ class SlotGroup(OrderedDictPlus, JSONMixin):
 class Intent(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'score']
 
-    def __init__(self, name, score, responses=None, slots=None, repeatable=False, preemptive=False, is_answer=False, is_greeting=False):
+    def __init__(self, name, score, responses=None, slots=None, repeatable=False, preemptive=False, fulfillment=None, is_answer=False, is_greeting=False):
         self.name =name
         self.score = score
         self.repeatable = repeatable
         self.preemptive = preemptive
+        self.fulfillment = fulfillment
         self.is_answer = is_answer
         self.is_greeting = is_greeting
         self.responses = {}
@@ -165,33 +166,62 @@ class Intent(PrintMixin, JSONMixin):
     def get_completed_intent_slots(self):
         return SlotGroup([(k, v) for k,v in self.slots.items() if v.value is not None])
 
-class Entity(PrintMixin, JSONMixin):
-    repr_attrs = ['name', 'type']
+    def get_fulfillment_data(self, convo, tx, slot_data):
+        slot_value_data = {k:slot_data[k].value.value for k in self.slots}
+        return dict(conversation_id=convo.id,
+                    transaction_id=tx.id,
+                    intent_name=self.name,
+                    slot_data=slot_value_data)
 
-    def __init__(self, name, type, start_index, end_index, score=None, values=None):
+    def fulfill(self, convo, tx, slot_data):
+        if not self.fulfillment:
+            dbg('Nothing to fulfill for intent %s' % self.name, color='white')
+            return
+
+        dbg('Handling fulfillment for intent %s: %s' % (self.name, self.fulfillment), color='white')
+        url = self.fulfillment['url']
+        headers = {'Content-type': 'application/json'}
+        fulfillment_data = self.get_fulfillment_data(convo, tx, slot_data)
+
+        try:
+            resp = requests.post(url, json=fulfillment_data)
+            resp.raise_for_status() # TODO: how should a failure here be handled on the front end?
+        finally:
+            ff = Fulfillments(conversation_id=convo.id,
+                              url=url,
+                              status_code=resp.status_code,
+                              status_message=resp.content,
+                              data=json.dumps(fulfillment_data))
+            db.session.merge(ff)
+            db.session.commit()
+
+class Entity(PrintMixin, JSONMixin):
+    repr_attrs = ['name', 'type', 'value', 'score']
+
+    def __init__(self, name, type, start_index, end_index, score=None, value=None):
         self.name = name
         self.type = type
         self.slot_name = type
         self.start_index = start_index
         self.end_index = end_index
         self.score = score
-        self.values = values
+        self.value = value
 
 class EntityHandler(JSONMixin):
-    def process(self, query, nlu_entities, translations={}):
+    def process(self, query, nlu_entities):
         entities = []
         for entity in nlu_entities:
             entities.append(Entity(name=entity['entity'],
-                                   type=translations.get(entity['type'], entity['type']),
-                                   start_index=entity['startIndex'],
-                                   end_index=entity['endIndex'],
+                                   type=entity['type'],
+                                   start_index=entity.get('startIndex', None),
+                                   end_index=entity.get('endIndex', None),
                                    score=entity.get('score', None),
-                                   values=entity.get('resolution', None)))
+                                   value=entity.get('value', None)))
         return entities
 
 class AddressEntityHandler(EntityHandler):
-    def process(self, query, nlu_entities, translations={}):
-        entities = super(AddressEntityHandler, self).process(query, nlu_entities, translations=translations)
+    def process(self, query, nlu_entities):
+        entities = super(AddressEntityHandler, self).process(query, nlu_entities)
         address = usaddress.parse(query)
 
         if not address:
@@ -214,7 +244,7 @@ class AddressEntityHandler(EntityHandler):
                                 start_index=None,
                                 end_index=None,
                                 score=None,
-                                values=address_value)
+                                value=address_value)
 
         entities.append(address_entity)
         return entities
@@ -267,7 +297,17 @@ class LUISResponse(IntentResponse):
             meta = INTENT_METADATA.get(name, {})
             intents.append(Intent(intent['intent'], intent['score'], **meta))
 
-        pprint(luis_json['entities'])
+        for entity in luis_json['entities']:
+            entity['type'] = self.ENTITY_TRANSLATIONS.get(entity['type'], entity['type'])
+            pprint(entity)
+            if 'resolution' in entity.keys():
+                resolution = entity['resolution']
+                if 'values' in resolution:
+                    entity['value'] = entity['resolution'].get('values', [])
+                else:
+                    entity['value'] = entity['resolution'].get('value', None)
+            else:
+                entity['value'] = entity['entity']
 
         entity_handler_name = 'EntityHandler'
         if last_tx and last_tx.slot_prompted:
@@ -275,7 +315,7 @@ class LUISResponse(IntentResponse):
             entity_handler_name = slot.entity_handler_name or entity_handler_name
         entity_handler = globals()[entity_handler_name]
 
-        entities = entity_handler().process(luis_json['query'], luis_json['entities'], self.ENTITY_TRANSLATIONS)
+        entities = entity_handler().process(luis_json['query'], luis_json['entities'])
         super(LUISResponse, self).__init__(luis_json['query'], intents, entities=entities)
 
 class Input(PrintMixin, JSONMixin):
@@ -412,6 +452,9 @@ class Conversation(JSONMixin, SaveMixin):
         self.id = str(uuid.uuid4())
         self.nlu = nlu
         self.transactions = OrderedDictPlus()
+        # TODO: this intent dict will also contain values as slots become
+        # filled, but similar intent objects get passed around/used that dont
+        # have those values. This is a bit confusing and should be cleaned up.
         self.intents = OrderedDictPlus()
         self.active_intents = OrderedDictPlus()
         self.completed_intents = OrderedDictPlus()
@@ -542,6 +585,7 @@ class Conversation(JSONMixin, SaveMixin):
 
     def add_completed_intent(self, tx, intent):
         dbg('Intent %s completed' % intent.name, color='white')
+        intent.fulfill(self, tx, self.get_intent_slots(intent))
         self.completed_intents[intent.name] = intent
         self.remove_active_intent(intent)
         tx.completed_intent = intent

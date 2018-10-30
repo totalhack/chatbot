@@ -1,5 +1,6 @@
 from cachetools import TTLCache
 from collections import OrderedDict
+from pprint import pprint
 import json
 
 from flask import render_template, request, Response
@@ -58,9 +59,17 @@ def chat():
     except Exception, e:
         print traceback.format_exc()
         error(str(e))
-        response = {'status': 'success', 'response': 'Something went wrong.'}
+        response = {'status': 'error', 'response': 'Something went wrong.'}
         if debug: response['error'] = traceback.format_exc()
         return jsonr(response)
+
+@app.route('/fulfillment', methods=['POST'])
+def fulfillment():
+    data = request.json
+    dbg('fulfillment called', color='purple')
+    pprint(data)
+    response = {'status': 'success', 'response': None}
+    return jsonr(response)
 
 if __name__ == "__main__":
     app.run(port=9000)
