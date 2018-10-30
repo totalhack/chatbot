@@ -66,7 +66,7 @@ def chat():
 @app.route('/fulfillment', methods=['POST'])
 def fulfillment():
     data = request.json
-    dbg('fulfillment called', color='purple')
+    dbg('fulfillment called', color='magenta')
     pprint(data)
     response = {'status': 'success', 'response': None}
     return jsonr(response)
