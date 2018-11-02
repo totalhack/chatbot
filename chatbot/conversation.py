@@ -2,9 +2,9 @@ from collections import OrderedDict
 import requests
 import uuid
 
+from flask import current_app
 import usaddress
 
-from chatbot import app
 from chatbot.model import *
 from chatbot.utils import *
 
@@ -82,18 +82,22 @@ INTENT_METADATA = {
     },
 }
 
-APP_INTENT_METADATA = app.config.get('APP_INTENT_METADATA', {})
-INTENT_METADATA.update(APP_INTENT_METADATA)
+APP_INTENT_METADATA = None
+
+def set_app_intent_metadata(metadata):
+    global APP_INTENT_METADATA
+    APP_INTENT_METADATA = metadata
+    INTENT_METADATA.update(metadata)
 
 def luis(query, staging=True, verbose=True):
     params = {
-        'subscription-key': app.config['LUIS_SUBKEY'],
+        'subscription-key': current_app.config['LUIS_SUBKEY'],
         'staging': 'true' if staging else 'false',
         'verbose': 'true' if verbose else 'false',
         'timezoneOffset': '-300',
         'q': query,
     }
-    resp = requests.get(app.config['LUIS_URL'], params=params)
+    resp = requests.get(current_app.config['LUIS_URL'], params=params)
     resp.raise_for_status()
     return resp.json()
 

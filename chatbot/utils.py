@@ -6,9 +6,7 @@ from pprint import pprint, pformat
 import random
 import sys
 
-from flask import Response
-
-from chatbot import app
+from flask import Response, current_app
 
 # https://stackoverflow.com/questions/16664874/how-can-i-add-an-element-at-the-top-of-an-ordereddict-in-python
 class OrderedDictPlus(OrderedDict):
@@ -63,7 +61,7 @@ def log(msg, label='parent', indent=0, color=None, format_func=pformat):
     print msg
 
 def dbg(msg, label='parent', **kwargs):
-    if not app.config['DEBUG']:
+    if not current_app.config['DEBUG']:
         return
     if label == 'parent':
         label = sys._getframe().f_back.f_code.co_name

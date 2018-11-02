@@ -3,9 +3,7 @@ from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.ext.declarative import declared_attr
 
-from chatbot import app
-
-db = SQLAlchemy(app)
+db = SQLAlchemy()
 
 class SaveMixin(object):
     save_attrs = []
