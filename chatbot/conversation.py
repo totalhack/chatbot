@@ -437,6 +437,12 @@ class Transaction(JSONMixin, SaveMixin):
                     dbg('Expected entity %s found in asnwer' % entity, color='blue')
                     return True, action
 
+        if self.expected_intents:
+            for intent, action in self.expected_intents.items():
+                if intent in [x.name for x in intents]:
+                    dbg('Expected intent %s found in asnwer' % intent, color='blue')
+                    return True, action
+
         if self.expected_text:
             assert False, 'Not supported yet'
 
@@ -672,7 +678,7 @@ class Conversation(JSONMixin, SaveMixin):
                 if action == Action.NONE:
                     pass # Just continue on?
                 elif action == Action.END_CONVERSATION:
-                    tx.add_response_message('goodbye', random.choice(COMMON_MESSAGE['goodbye']))
+                    tx.add_response_message('goodbye', random.choice(COMMON_MESSAGES['goodbye']))
                     return
             else:
                 dbg('Last TX not answered', color='white')
