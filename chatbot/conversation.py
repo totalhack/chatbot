@@ -202,7 +202,7 @@ class Intent(PrintMixin, JSONMixin):
 class Entity(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'type', 'value', 'score']
 
-    def __init__(self, name, type, start_index, end_index, score=None, value=None):
+    def __init__(self, name, type, start_index=None, end_index=None, score=None, value=None):
         self.name = name
         self.type = type
         self.slot_name = type
@@ -268,7 +268,7 @@ class IntentResponse(PrintMixin, JSONMixin):
         self.entities = entities or []
 
     def filter_intents(self, score):
-        return [x for x in self.intents if x.score > score]
+        return [x for x in self.intents if (x.score is None or x.score > score)]
 
     def filter_entities(self, score):
         return [x for x in self.entities if (x.score is None or x.score > score)]
@@ -279,12 +279,19 @@ class IntentResponse(PrintMixin, JSONMixin):
         return valid_intents, valid_entities
 
 class TriggeredIntentResponse(IntentResponse):
-    def __init__(self, intent_name):
+    def __init__(self, intent_name, context=None):
         assert intent_name in INTENT_METADATA, 'Invalid intent name: %s' % intent_name
         meta = INTENT_METADATA[intent_name]
         score = 1
         intents = [Intent(intent_name, score, **meta)]
-        super(TriggeredIntentResponse, self).__init__(None, intents, entities=None)
+
+        entities = []
+        if context:
+            assert type(context) == dict, 'Invalid context: %s' % context
+            for k,v in context.items():
+                entities.append(Entity(name=k, type=k, value=v))
+
+        super(TriggeredIntentResponse, self).__init__(None, intents, entities=entities)
 
 class LUISResponse(IntentResponse):
     ENTITY_TRANSLATIONS = {
@@ -303,7 +310,6 @@ class LUISResponse(IntentResponse):
 
         for entity in luis_json['entities']:
             entity['type'] = self.ENTITY_TRANSLATIONS.get(entity['type'], entity['type'])
-            pprint(entity)
             if 'resolution' in entity.keys():
                 resolution = entity['resolution']
                 if 'values' in resolution:
@@ -333,6 +339,7 @@ class Input(PrintMixin, JSONMixin):
         self.raw_input = input
         self.type = None
         self.value = None
+        self.context = None
 
         if type(input) in (str, unicode):
             self.type = 'text'
@@ -340,6 +347,7 @@ class Input(PrintMixin, JSONMixin):
         elif type(input) == dict:
             self.type = input['type']
             self.value = input['value']
+            self.context = input.get('context', {})
         else:
             assert False, 'Invalid input: %s' % input
 
@@ -480,7 +488,7 @@ class Conversation(JSONMixin, SaveMixin):
         last_tx = self.get_last_transaction()
 
         if input.type == 'intent':
-            intent_response = TriggeredIntentResponse(input.value)
+            intent_response = TriggeredIntentResponse(input.value, input.context)
         elif input.type == 'text':
             if self.nlu == 'luis':
                 intent_response = LUISResponse(luis(input.value), last_tx)
@@ -517,6 +525,16 @@ class Conversation(JSONMixin, SaveMixin):
     def clear_slot_attempts(self, intent):
         self.slot_attempts[intent.name] = 0
 
+    def get_next_slot_and_prompt(self, tx, remaining_slots):
+        slot = remaining_slots.get_next_slot()
+        if not self.add_slot_attempt(self.active_intent, slot):
+            # We've asked this slot question the max number of times already
+            self.abort_intent(tx, self.active_intent)
+            return None, None
+        slot_prompt = slot.get_prompt()
+        tx.slot_prompted = slot
+        return slot, slot_prompt
+
     def abort_intent(self, tx, intent):
         tx.abort_intent(intent)
         tx.add_response_message('intent_aborted', random.choice(COMMON_MESSAGES['intent_aborted']))
@@ -529,7 +547,7 @@ class Conversation(JSONMixin, SaveMixin):
         for intent_name, intent in self.intents.items():
             for slot_name, slot in intent.slots.items():
                 if slot.value is not None:
-                    filled_slots.setdefaut(slot_name, SlotGroup())[intent_name] = slot.value
+                    filled_slots.setdefault(slot_name, SlotGroup())[intent_name] = slot.value
         return filled_slots
 
     def get_filled_slots_by_name(self, slot_name):
@@ -544,6 +562,9 @@ class Conversation(JSONMixin, SaveMixin):
 
     def fill_intent_slots_with_entities(self, tx, intent, entities):
         remaining_slots = intent.get_remaining_intent_slots()
+        if not entities:
+            return remaining_slots
+
         if remaining_slots:
             for entity in entities:
                 if entity.slot_name in remaining_slots:
@@ -609,24 +630,25 @@ class Conversation(JSONMixin, SaveMixin):
         if intent.name in self.completed_intents:
             del self.completed_intents[intent.name]
 
-    def add_intent_message(self, tx, intent, response_type=ResponseType.ACTIVE):
+    def add_intent_message(self, tx, intent, response_type=ResponseType.ACTIVE, entities=None):
         response = random.choice(intent.responses.get(response_type, ['']))
         if not response:
             warn('No response for intent %s' % intent)
 
         slot_prompt = ''
         if response_type in [ResponseType.ACTIVE, ResponseType.RESUMED] and self.get_intent_slots(intent):
+            remaining_slots = self.fill_intent_slots_with_entities(tx, intent, entities)
+            if not remaining_slots:
+                return # The intent was satisfied by data in collected entities
+
             remaining_slots = self.fill_intent_slots_with_filled_slots(tx, intent)
             if not remaining_slots:
-                return # The intent was satisfied by existing data
+                return # The intent was satisfied by existing slot data
+
             # There are slots to prompt for this intent still
-            slot = remaining_slots.get_next_slot()
-            if not self.add_slot_attempt(self.active_intent, slot):
-                # We've already asked this question the max number of times
-                self.abort_intent(tx, intent)
+            slot, slot_prompt = self.get_next_slot_and_prompt(tx, remaining_slots)
+            if not slot:
                 return
-            slot_prompt = slot.get_prompt()
-            tx.slot_prompted = slot
 
         if response: tx.add_response_message('%s:%s' % (intent.name, response_type), response)
         if slot_prompt: tx.add_response_message('%s:%s' % (intent.name, slot.name), slot_prompt)
@@ -698,19 +720,15 @@ class Conversation(JSONMixin, SaveMixin):
             dbg('Active intent %s' % self.active_intent.name, color='white')
             remaining_slots = self.fill_intent_slots_with_entities(tx, self.active_intent, valid_entities)
             if remaining_slots:
-                slot = remaining_slots.get_next_slot()
-                if not self.add_slot_attempt(self.active_intent, slot):
-                    # We have already asked the max number of times
-                    self.abort_intent(tx, intent)
+                slot, slot_prompt = self.get_next_slot_and_prompt(tx, remaining_slots)
+                if not slot:
                     return
-                slot_prompt = slot.get_prompt()
-                tx.slot_prompted = slot
                 tx.add_response_message('%s:%s' % (self.active_intent.name, slot.name), slot_prompt)
                 return
             else:
                 self.active_intent_completed(tx)
 
-        # We've handlded any one-off or active intents, move on to other intents
+        # We've handled any one-off or active intents, move on to other intents
         # that were already registered
         for i, intent in enumerate(self.active_intents.values()):
             message = None
@@ -726,7 +744,7 @@ class Conversation(JSONMixin, SaveMixin):
                 response_type = Response.DEFERRED
 
             dbg('Handling %s intent: %s' % (response_type, intent), color='white')
-            self.add_intent_message(tx, intent, response_type=response_type)
+            self.add_intent_message(tx, intent, response_type=response_type, entities=valid_entities)
 
         if not tx.response_messages:
             if tx.completed_intent:
