@@ -8,6 +8,10 @@ import sys
 
 from flask import Response, current_app
 
+def st():
+    import pdb
+    pdb.set_trace()
+
 # https://stackoverflow.com/questions/16664874/how-can-i-add-an-element-at-the-top-of-an-ordereddict-in-python
 class OrderedDictPlus(OrderedDict):
     def prepend(self, key, value, dict_setitem=dict.__setitem__):

@@ -1,5 +1,7 @@
 from collections import OrderedDict
+from importlib import import_module
 import requests
+import sys
 import uuid
 
 from flask import current_app
@@ -82,12 +84,30 @@ INTENT_METADATA = {
     },
 }
 
-APP_INTENT_METADATA = None
+ENTITY_HANDLERS = {
+    'address': 'AddressEntityHandler',
+}
 
-def set_app_intent_metadata(metadata):
+APP_INTENT_METADATA = None
+APP_ENTITY_HANDLERS = None
+
+def set_app_data_from_config(config):
     global APP_INTENT_METADATA
-    APP_INTENT_METADATA = metadata
-    INTENT_METADATA.update(metadata)
+    APP_INTENT_METADATA = config.get('APP_INTENT_METADATA', {})
+    INTENT_METADATA.update(APP_INTENT_METADATA)
+
+    global APP_ENTITY_HANDLERS
+    APP_ENTITY_HANDLERS = config.get('APP_ENTITY_HANDLERS', {})
+    ENTITY_HANDLERS.update(APP_ENTITY_HANDLERS)
+
+def get_entity_handler(name):
+    if '.' not in name:
+        module_name = __name__ # current module name
+        object_name = name
+    else:
+        module_name = '.'.join(name.split('.')[:-1])
+        object_name = name.split('.')[-1]
+    return getattr(import_module(module_name), object_name)
 
 def luis(query, staging=True, verbose=True):
     params = {
@@ -112,7 +132,7 @@ class Slot(PrintMixin, JSONMixin):
         self.name = name
         self.prompts = prompts
         if entity_handler_name:
-            assert type(entity_handler_name) in (str, unicode) and entity_handler_name in globals(), 'Invalid entity handler: %s' % entity_handler_name
+            assert type(entity_handler_name) in (str, unicode), 'Invalid entity handler: %s' % entity_handler_name
         self.entity_handler_name = entity_handler_name
         self.value = None
 
@@ -160,8 +180,8 @@ class Intent(PrintMixin, JSONMixin):
                     slot_name, slot_prompts, entity_handler_name = slot_tuple
                 assert type(slot_prompts) in (tuple, list)
 
-                if (not entity_handler_name) and slot_name in SLOT_ENTITY_HANDLERS:
-                    entity_handler_name = SLOT_ENTITY_HANDLERS[slot_name]
+                if (not entity_handler_name) and slot_name in ENTITY_HANDLERS:
+                    entity_handler_name = ENTITY_HANDLERS[slot_name]
                 self.slots[slot_name] = Slot(slot_name, slot_prompts, entity_handler_name=entity_handler_name)
 
     def get_remaining_intent_slots(self):
@@ -223,6 +243,19 @@ class EntityHandler(JSONMixin):
                                    value=entity.get('value', None)))
         return entities
 
+class QueryEntityHandler(EntityHandler):
+    '''Just echoes the query back as an entity'''
+    def process(self, query, nlu_entities):
+        entities = super(QueryEntityHandler, self).process(query, nlu_entities)
+        query_entity = Entity(name='query',
+                              type='query',
+                              start_index=None,
+                              end_index=None,
+                              score=None,
+                              value=query)
+        entities.insert(0, query_entity)
+        return entities
+
 class AddressEntityHandler(EntityHandler):
     def process(self, query, nlu_entities):
         entities = super(AddressEntityHandler, self).process(query, nlu_entities)
@@ -250,12 +283,8 @@ class AddressEntityHandler(EntityHandler):
                                 score=None,
                                 value=address_value)
 
-        entities.append(address_entity)
+        entities.insert(0, address_entity)
         return entities
-
-SLOT_ENTITY_HANDLERS = {
-    'address': 'AddressEntityHandler',
-}
 
 class IntentResponse(PrintMixin, JSONMixin):
     repr_attrs = ['query', 'intents', 'entities']
@@ -323,7 +352,7 @@ class LUISResponse(IntentResponse):
         if last_tx and last_tx.slot_prompted:
             slot = last_tx.slot_prompted
             entity_handler_name = slot.entity_handler_name or entity_handler_name
-        entity_handler = globals()[entity_handler_name]
+        entity_handler = get_entity_handler(entity_handler_name)
 
         entities = entity_handler().process(luis_json['query'], luis_json['entities'])
         super(LUISResponse, self).__init__(luis_json['query'], intents, entities=entities)

@@ -12,9 +12,7 @@ from chatbot.conversation import *
 from chatbot.utils import *
 
 db.init_app(app)
-
-APP_INTENT_METADATA = app.config.get('APP_INTENT_METADATA', {})
-set_app_intent_metadata(APP_INTENT_METADATA)
+set_app_data_from_config(app.config)
 
 # TODO: replace with an external cache
 CACHE_SIZE = 100
