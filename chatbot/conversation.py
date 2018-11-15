@@ -90,6 +90,7 @@ ENTITY_HANDLERS = {
 
 APP_INTENT_METADATA = None
 APP_ENTITY_HANDLERS = None
+APP_COMMON_MESSAGES = None
 
 def set_app_data_from_config(config):
     global APP_INTENT_METADATA
@@ -99,6 +100,10 @@ def set_app_data_from_config(config):
     global APP_ENTITY_HANDLERS
     APP_ENTITY_HANDLERS = config.get('APP_ENTITY_HANDLERS', {})
     ENTITY_HANDLERS.update(APP_ENTITY_HANDLERS)
+
+    global APP_COMMON_MESSAGES
+    APP_COMMON_MESSAGES = config.get('APP_COMMON_MESSAGES', {})
+    COMMON_MESSAGES.update(APP_COMMON_MESSAGES)
 
 def get_entity_handler(name):
     if '.' not in name:
