@@ -74,6 +74,13 @@ class TestChatBot(unittest.TestCase):
                 message_name = data['transaction']['response_messages'].keys()[0]
                 self.assertEqual(message_name, expected_message_name)
 
+            if data['completed_intent']:
+                print 'Completed intent %s' % data['completed_intent']['name']
+                print 'Fulfillment data: %s' % data['fulfillment_data'].get('slot_data', None)
+
+            if data['completed_conversation']:
+                print 'Completed conversation'
+
 if __name__ == '__main__':
     suite = unittest.TestLoader().loadTestsFromTestCase(TestChatBot)
     result = unittest.TextTestRunner(verbosity=2).run(suite)

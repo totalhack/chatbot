@@ -54,7 +54,10 @@ def chat():
         response = {'status': 'success',
                     'response': reply,
                     'conversation_id': convo_id,
-                    'transaction_id': tx.id}
+                    'transaction_id': tx.id,
+                    'completed_intent': tx.completed_intent,
+                    'completed_conversation': convo.completed,
+                    'fulfillment_data': tx.completed_intent.fulfillment_data if tx.completed_intent else None}
         if debug:
             response['transaction'] = tx
         return jsonr(response)

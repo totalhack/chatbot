@@ -161,6 +161,7 @@ class Intent(PrintMixin, JSONMixin):
         self.repeatable = repeatable
         self.preemptive = preemptive
         self.fulfillment = fulfillment
+        self.fulfillment_data = None
         self.is_answer = is_answer
         self.is_greeting = is_greeting
         self.responses = {}
@@ -198,6 +199,12 @@ class Intent(PrintMixin, JSONMixin):
                     slot_data=slot_value_data)
 
     def fulfill(self, convo, tx, slot_data):
+        # Set the fulfillment data on this even if there is no fulfillment URL
+        # to call, so clients can still have a clean way of getting all slot
+        # data for a particular intent.
+        fulfillment_data = self.get_fulfillment_data(convo, tx, slot_data)
+        self.fulfillment_data = fulfillment_data
+
         if not self.fulfillment:
             dbg('Nothing to fulfill for intent %s' % self.name, color='white')
             return
@@ -205,7 +212,6 @@ class Intent(PrintMixin, JSONMixin):
         dbg('Handling fulfillment for intent %s: %s' % (self.name, self.fulfillment), color='white')
         url = self.fulfillment['url']
         headers = {'Content-type': 'application/json'}
-        fulfillment_data = self.get_fulfillment_data(convo, tx, slot_data)
 
         try:
             resp = requests.post(url, json=fulfillment_data)
@@ -507,6 +513,7 @@ class Conversation(JSONMixin, SaveMixin):
         self.completed_intents = OrderedDictPlus()
         self.active_intent = None
         self.slot_attempts = OrderedDictPlus()
+        self.completed = False
 
     def save(self):
         convo = Conversations(id=self.id, data=json.dumps(self.get_save_data()))
@@ -729,6 +736,7 @@ class Conversation(JSONMixin, SaveMixin):
                 if action == Action.NONE:
                     pass # Just continue on?
                 elif action == Action.END_CONVERSATION:
+                    self.completed = True
                     tx.add_response_message('goodbye', random.choice(COMMON_MESSAGES['goodbye']))
                     return
             else:
