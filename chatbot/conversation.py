@@ -519,9 +519,17 @@ class Transaction(JSONMixin, SaveMixin):
             assert type(expected_text) == dict
             self.expected_text = expected_text
 
-    def format_response_message(self):
+    def format_response_message(self, context={}):
         response_message = ' '.join(self.response_messages.values())
-        self.response_message_text = response_message
+        if '{' in response_message or '}' in response_message:
+            assert ('{' in response_message) and ('}' in response_message), 'Invalid message template, open or close braces missing: "%s"' % response_message
+            # TODO: we shouldnt allow prompts that require context values that
+            # are not filled if there are other options
+            try:
+                response_message = response_message.format(**context)
+            except KeyError, e:
+                raise KeyError('Invalid message template, could not find "%s" in context' % str(e))
+            self.response_message_text = response_message
         return response_message
 
     def copy_data_from_transaction(self, other_tx):
@@ -681,6 +689,14 @@ class Conversation(JSONMixin, SaveMixin):
                     filled_slots.setdefault(slot_name, QuestionGroup())[intent_name] = slot.value
         return filled_slots
 
+    def get_filled_slots_by_intent(self, intent):
+        '''returns a simple map of slot names to values for this intent'''
+        filled_slots = {}
+        for slot_name, slot in intent.slots.items():
+            if slot.value is not None:
+                filled_slots[slot_name] = slot.value.value
+        return filled_slots
+
     def get_filled_slots_by_name(self, slot_name):
         filled_slots = self.get_filled_slots()
         return filled_slots.get(slot_name, QuestionGroup())
@@ -716,7 +732,7 @@ class Conversation(JSONMixin, SaveMixin):
             for slot_name, slot in remaining_slots.items():
                 filled_slots = self.get_filled_slots_by_name(slot_name)
                 if not any(filled_slots.values()):
-                    # This slot has not values, so we cant fill anything. Move on.
+                    # This slot has no values, so we cant fill anything. Move on.
                     continue
 
                 # This slot has already been filled. Reuse its value.
@@ -929,7 +945,14 @@ class Conversation(JSONMixin, SaveMixin):
     def reply(self, tx, input):
         input = Input(input)
         tx.input = input
+
         intent_response = self.understand(tx, input)
+
         self.process_intent_response(tx, intent_response)
-        response_message = tx.format_response_message()
+
+        context = {}
+        if self.active_intent:
+            context = self.get_filled_slots_by_intent(self.active_intent)
+        response_message = tx.format_response_message(context=context)
+
         return response_message
