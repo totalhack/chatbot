@@ -32,6 +32,7 @@ class Actions(object):
     NONE = 'none'
     REPEAT = 'repeat'
     REPEAT_SLOT = 'repeat_slot'
+    REPLACE_SLOT = 'replace_slot'
 
 COMMON_MESSAGES = {
     'fallback': [
@@ -140,12 +141,15 @@ def luis(query, staging=True, verbose=True):
 class Question(PrintMixin, JSONMixin):
     repr_attrs = ['name']
 
-    def __init__(self, name, prompts, intent_actions=None):
+    def __init__(self, name, prompts, intent_actions=None, entity_actions=None):
         self.name = name
         self.prompts = prompts
         self.intent_actions = intent_actions
         if intent_actions:
             assert type(intent_actions) == dict, 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
+        self.entity_actions = entity_actions
+        if entity_actions:
+            assert type(entity_actions) == dict, 'Invalid type for entity_actions, must be dict: %s' % type(entity_actions)
 
     def get_prompt(self):
         prompt = random.choice(self.prompts)
@@ -153,6 +157,9 @@ class Question(PrintMixin, JSONMixin):
 
     def get_intent_actions(self):
         return self.intent_actions
+
+    def get_entity_actions(self):
+        return self.entity_actions
 
 class QuestionGroup(OrderedDictPlus, JSONMixin):
     def get_next(self):
@@ -214,7 +221,14 @@ class FollowUp(Question):
         follow_up = None
         if follow_up_info:
             follow_up_name = '%s_follow_up' % slot_name
-            follow_up = cls(follow_up_name, follow_up_info['prompts'], intent_actions=follow_up_info.get('actions', DEFAULT_FOLLOW_UP_ACTIONS))
+            # If they provide the slot answer, process it and continue
+            # TODO: This may be overly simplistic. What if the same slot entity
+            # is mentinoed but doesnt need replacing? This may hijack the processing of
+            # that message.
+            entity_actions = {slot_name: Actions.REPLACE_SLOT}
+            follow_up = cls(follow_up_name, follow_up_info['prompts'],
+                            intent_actions=follow_up_info.get('actions', DEFAULT_FOLLOW_UP_ACTIONS),
+                            entity_actions=entity_actions)
         return follow_up
 
 class Intent(PrintMixin, JSONMixin):
@@ -861,6 +875,13 @@ class Conversation(JSONMixin, SaveMixin):
                     self.completed = True
                     tx.add_response_message('goodbye', random.choice(COMMON_MESSAGES['goodbye']))
                     return
+                elif action == Actions.REPLACE_SLOT:
+                    slots_filled = last_tx.slots_filled
+                    assert slots_filled, 'Trying to replace slot but no slot filled on previous transaction'
+                    filled_slot_names = [x.slot_name for x in slots_filled.values()]
+                    for entity in valid_entities:
+                        if entity.slot_name in filled_slot_names:
+                            self.fill_intent_slot(tx, self.active_intent, entity)
                 elif action == Actions.REPEAT_SLOT:
                     slots_filled = last_tx.slots_filled
                     assert slots_filled, 'Trying to repeat slot but no slot filled on previous transaction'
@@ -896,6 +917,7 @@ class Conversation(JSONMixin, SaveMixin):
                     return
 
                 tx.add_response_message('%s:%s' % (self.active_intent.name, question.name), prompt,
+                                        expected_entities=question.entity_actions,
                                         expected_intents=question.intent_actions)
                 return
             else:
