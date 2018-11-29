@@ -2,6 +2,7 @@ import json
 from pprint import pprint
 import random
 import requests
+import sys
 import unittest
 
 from chatbot import app
@@ -82,5 +83,9 @@ class TestChatBot(unittest.TestCase):
                 print 'Completed conversation'
 
 if __name__ == '__main__':
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestChatBot)
+    if len(sys.argv) > 1:
+        suite = unittest.TestSuite()
+        suite.addTest(TestChatBot(sys.argv[1]))
+    else:
+        suite = unittest.TestLoader().loadTestsFromTestCase(TestChatBot)
     result = unittest.TextTestRunner(verbosity=2).run(suite)

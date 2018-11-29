@@ -43,9 +43,13 @@ COMMON_MESSAGES = {
         "Stil need to add a help message",
     ],
 
-    'intents_complete': [
-        "Is there anything else I can help you with today?",
-    ],
+    'intents_complete': {
+        'prompts': [
+            "Is there anything else I can help you with today?",
+        ],
+        'intent_actions': {CommonIntents.CONFIRM_YES: Actions.NONE,
+                           CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}
+    },
 
     'intent_aborted': [
         "I'm sorry, I'm unable to help you at this time",
@@ -223,11 +227,11 @@ class FollowUp(Question):
             follow_up_name = '%s_follow_up' % slot_name
             # If they provide the slot answer, process it and continue
             # TODO: This may be overly simplistic. What if the same slot entity
-            # is mentinoed but doesnt need replacing? This may hijack the processing of
+            # is mentioned but doesnt need replacing? This may hijack the processing of
             # that message.
             entity_actions = {slot_name: Actions.REPLACE_SLOT}
             follow_up = cls(follow_up_name, follow_up_info['prompts'],
-                            intent_actions=follow_up_info.get('actions', DEFAULT_FOLLOW_UP_ACTIONS),
+                            intent_actions=follow_up_info.get('intent_actions', DEFAULT_FOLLOW_UP_ACTIONS),
                             entity_actions=entity_actions)
         return follow_up
 
@@ -533,6 +537,30 @@ class Transaction(JSONMixin, SaveMixin):
             assert type(expected_text) == dict
             self.expected_text = expected_text
 
+    def add_common_response_message(self, message_name):
+        message_info = COMMON_MESSAGES[message_name]
+
+        if type(message_info) == str:
+            message = message_info
+            expected_entities = None
+            expected_intents = None
+        elif type(message_info) in (list, tuple):
+            message = random.choice(message_info)
+            expected_entities = None
+            expected_intents = None
+        else:
+            message = random.choice(message_info['prompts'])
+            # TODO: type checking on these?
+            expected_entities = message_info.get('entity_actions', None)
+            expected_intents = message_info.get('intent_actions', None)
+            if expected_intents:
+                # XXX: should this be controllable by a flag? Or made unnecessary?
+                for intent in APP_INTENT_METADATA.keys():
+                    if intent not in expected_intents:
+                        expected_intents[intent] = Actions.NONE
+
+        self.add_response_message(message_name, message, expected_entities=expected_entities, expected_intents=expected_intents)
+
     def format_response_message(self, context={}):
         response_message = ' '.join(self.response_messages.values())
         if '{' in response_message or '}' in response_message:
@@ -690,7 +718,7 @@ class Conversation(JSONMixin, SaveMixin):
 
     def abort_intent(self, tx, intent):
         tx.abort_intent(intent)
-        tx.add_response_message('intent_aborted', random.choice(COMMON_MESSAGES['intent_aborted']))
+        tx.add_common_response_message('intent_aborted')
         self.clear_question_attempts(intent)
         self.remove_active_intent(intent)
 
@@ -849,12 +877,12 @@ class Conversation(JSONMixin, SaveMixin):
                     if last_tx:
                         self.repeat_transaction(tx, last_tx, reason='user request')
                     else:
-                        tx.add_response_message('fallback', random.choice(COMMON_MESSAGES['fallback']))
+                        tx.add_common_response_message('fallback')
                     return
 
                 if intent.name == CommonIntents.HELP:
                     dbg('Help Intent', color='white')
-                    tx.add_response_message('help', random.choice(COMMON_MESSAGES['help']))
+                    tx.add_common_response_message('help')
                     return
             else:
                 self.add_active_intent(intent)
@@ -869,11 +897,11 @@ class Conversation(JSONMixin, SaveMixin):
 
                 # TODO: better action handling
                 if action == Actions.NONE:
-                    # Just continue on?
+                    # Just continue on
                     pass
                 elif action == Actions.END_CONVERSATION:
                     self.completed = True
-                    tx.add_response_message('goodbye', random.choice(COMMON_MESSAGES['goodbye']))
+                    tx.add_common_response_message('goodbye')
                     return
                 elif action == Actions.REPLACE_SLOT:
                     slots_filled = last_tx.slots_filled
@@ -943,15 +971,9 @@ class Conversation(JSONMixin, SaveMixin):
 
         if not tx.response_messages:
             if tx.completed_intent:
-                expected_intents = {CommonIntents.CONFIRM_YES: Actions.NONE,
-                                    CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}
-                for intent in APP_INTENT_METADATA.keys():
-                    expected_intents[intent] = Actions.NONE
-                tx.add_response_message('intents_complete',
-                                        random.choice(COMMON_MESSAGES['intents_complete']),
-                                        expected_intents=expected_intents)
+                tx.add_common_response_message('intents_complete')
             else:
-                tx.add_response_message('fallback', random.choice(COMMON_MESSAGES['fallback']))
+                tx.add_common_response_message('fallback')
 
     def process_intent_response(self, tx, intent_response):
         valid_intents, valid_entities = intent_response.get_valid()

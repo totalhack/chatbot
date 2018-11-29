@@ -20,9 +20,13 @@ LUIS_SUBKEY = '<my luis subkey>',
 
 ### App-specific overrides for messages (optional)
 APP_COMMON_MESSAGES = {
-    'intents_complete': [
-        'We are all set. Need anything else?'
-    ]
+    'intents_complete': {
+        'prompts': [
+            'We are all set. Need anything else?'
+        ],
+        'intent_actions': {CommonIntents.CONFIRM_YES: Actions.NONE,
+                           CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}
+    }
 }
 
 ### App-specific overrides for entity handling (optional)
@@ -53,8 +57,8 @@ APP_INTENT_METADATA = {
             ('zipcode', {'prompts': ['Can I have your zipcode?'],
                          # Optional follow up for confirmation
                          'follow_up': {'prompts': ['I heard {zipcode}. Is that correct?'],
-                                       'actions': {CommonIntents.CONFIRM_YES: Actions.NONE,
-                                                   CommonIntents.CONFIRM_NO: Actions.REPEAT_SLOT}},
+                                       'intent_actions': {CommonIntents.CONFIRM_YES: Actions.NONE,
+                                                          CommonIntents.CONFIRM_NO: Actions.REPEAT_SLOT}},
                          # Optionally specify custom entity handler for this
                          # particular slot on this intent. It can be a default
                          # class name or import string such as mypackage.module.MyEntityHandler.
