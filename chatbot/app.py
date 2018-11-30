@@ -41,6 +41,7 @@ def chat():
             dbg('Creating new conversation', color='green')
             convo = Conversation()
             convo_id = convo.id
+            convo.save()
 
         tx = convo.create_transaction()
 

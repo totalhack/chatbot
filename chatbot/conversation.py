@@ -439,8 +439,9 @@ class LUISResponse(IntentResponse):
 class Input(PrintMixin, JSONMixin):
     repr_attrs = ['type', 'value']
     types = [
+        'action',
+        'intent',
         'text',
-        'intent'
     ]
 
     def __init__(self, input):
@@ -539,18 +540,18 @@ class Transaction(JSONMixin, SaveMixin):
 
     def add_common_response_message(self, message_name):
         message_info = COMMON_MESSAGES[message_name]
+        message = None
+        expected_entities = None
+        expected_intents = None
 
-        if type(message_info) == str:
+        if not message_info:
+            pass
+        elif type(message_info) == str:
             message = message_info
-            expected_entities = None
-            expected_intents = None
         elif type(message_info) in (list, tuple):
             message = random.choice(message_info)
-            expected_entities = None
-            expected_intents = None
         else:
             message = random.choice(message_info['prompts'])
-            # TODO: type checking on these?
             expected_entities = message_info.get('entity_actions', None)
             expected_intents = message_info.get('intent_actions', None)
             if expected_intents:
@@ -562,7 +563,7 @@ class Transaction(JSONMixin, SaveMixin):
         self.add_response_message(message_name, message, expected_entities=expected_entities, expected_intents=expected_intents)
 
     def format_response_message(self, context={}):
-        response_message = ' '.join(self.response_messages.values())
+        response_message = ' '.join([x for x in self.response_messages.values() if x])
         if '{' in response_message or '}' in response_message:
             assert ('{' in response_message) and ('}' in response_message), 'Invalid message template, open or close braces missing: "%s"' % response_message
             # TODO: we shouldnt allow prompts that require context values that
@@ -636,6 +637,46 @@ class Conversation(JSONMixin, SaveMixin):
         convo = Conversations(id=self.id, data=json.dumps(self.get_save_data()))
         db.session.merge(convo)
         db.session.commit()
+
+    def do_action(self, tx, action, valid_entities=None, valid_intents=None):
+        dbg('Do action %s' % action, color='magenta')
+
+        if action == Actions.NONE:
+            pass
+
+        elif action == Actions.END_CONVERSATION:
+            self.completed = True
+            tx.add_common_response_message('goodbye')
+
+        elif action == Actions.REPLACE_SLOT:
+            last_tx = self.get_last_transaction()
+            slots_filled = last_tx.slots_filled
+            assert slots_filled, 'Trying to replace slot but no slot filled on previous transaction'
+            filled_slot_names = [x.slot_name for x in slots_filled.values()]
+
+            for entity in valid_entities:
+                if entity.slot_name in filled_slot_names:
+                    filled_slot = self.fill_intent_slot(tx, self.active_intent, entity)
+                    if filled_slot.follow_up:
+                        fu = filled_slot.follow_up
+                        dbg('Adding follow-up %s during REPLACE_SLOT' % fu.name, color='magenta')
+                        question, prompt = self.get_question_and_prompt(tx, fu)
+                        if not question:
+                            # Can happen if we've exhausted the question/slot and the intent is aborted
+                            # TODO: check specifically for the intent being aborted?
+                            return
+                        tx.add_response_message('%s:%s' % (self.active_intent.name, question.name), prompt,
+                                                expected_entities=question.entity_actions,
+                                                expected_intents=question.intent_actions)
+
+        elif action == Actions.REPEAT_SLOT:
+            last_tx = self.get_last_transaction()
+            slots_filled = last_tx.slots_filled
+            assert slots_filled, 'Trying to repeat slot but no slot filled on previous transaction'
+            for slot_name, slot in slots_filled.items():
+                self.clear_filled_slot(self.active_intent, slot)
+        else:
+            assert False, 'Unrecognized action: %s' % action
 
     def understand(self, tx, input):
         last_tx = self.get_last_transaction()
@@ -716,6 +757,9 @@ class Conversation(JSONMixin, SaveMixin):
         prompt = question.get_prompt()
         return question, prompt
 
+    def get_question_and_prompt(self, tx, question):
+        return self.get_next_question_and_prompt(tx, QuestionGroup([(question.name, question)]))
+
     def abort_intent(self, tx, intent):
         tx.abort_intent(intent)
         tx.add_common_response_message('intent_aborted')
@@ -765,6 +809,14 @@ class Conversation(JSONMixin, SaveMixin):
                         fu = filled_slot.follow_up
                         dbg('Adding follow-up %s' % fu.name, color='cyan')
                         remaining_questions.prepend(fu.name, fu)
+
+            if not remaining_questions:
+                dbg('All slots filled by existing slot data', color='cyan')
+                if intent == self.active_intent:
+                    self.active_intent_completed(tx)
+                else:
+                    self.add_completed_intent(tx, intent)
+
         return remaining_questions
 
     def fill_intent_slots_with_filled_slots(self, tx, intent):
@@ -816,8 +868,9 @@ class Conversation(JSONMixin, SaveMixin):
         tx.completed_intent = intent
 
     def active_intent_completed(self, tx):
-        self.add_completed_intent(tx, self.active_intent)
-        self.active_intent = None
+        if self.active_intent:
+            self.add_completed_intent(tx, self.active_intent)
+            self.active_intent = None
 
     def remove_completed_intent(self, intent):
         assert False, 'Probably shouldnt allow this'
@@ -894,30 +947,9 @@ class Conversation(JSONMixin, SaveMixin):
             is_answered, action = last_tx.is_answered(valid_entities, valid_intents, tx.input)
             if is_answered:
                 dbg('Last TX answered', color='white')
-
-                # TODO: better action handling
-                if action == Actions.NONE:
-                    # Just continue on
-                    pass
-                elif action == Actions.END_CONVERSATION:
-                    self.completed = True
-                    tx.add_common_response_message('goodbye')
+                self.do_action(tx, action, valid_entities=valid_entities, valid_intents=valid_intents)
+                if self.completed or tx.response_messages:
                     return
-                elif action == Actions.REPLACE_SLOT:
-                    slots_filled = last_tx.slots_filled
-                    assert slots_filled, 'Trying to replace slot but no slot filled on previous transaction'
-                    filled_slot_names = [x.slot_name for x in slots_filled.values()]
-                    for entity in valid_entities:
-                        if entity.slot_name in filled_slot_names:
-                            self.fill_intent_slot(tx, self.active_intent, entity)
-                elif action == Actions.REPEAT_SLOT:
-                    slots_filled = last_tx.slots_filled
-                    assert slots_filled, 'Trying to repeat slot but no slot filled on previous transaction'
-                    for slot_name, slot in slots_filled.items():
-                        self.clear_filled_slot(self.active_intent, slot)
-                else:
-                    assert False, 'Unrecognized action: %s' % action
-
             else:
                 dbg('Last TX not answered', color='white')
                 # TODO: add "i didnt get that" or similar to response
@@ -941,7 +973,8 @@ class Conversation(JSONMixin, SaveMixin):
             if remaining_questions:
                 question, prompt = self.get_next_question_and_prompt(tx, remaining_questions)
                 if not question:
-                    # Can happen if we've exhausted the question/slot
+                    # Can happen if we've exhausted the question/slot and the intent is aborted
+                    # TODO: check specifically for the intent being aborted?
                     return
 
                 tx.add_response_message('%s:%s' % (self.active_intent.name, question.name), prompt,
@@ -966,7 +999,7 @@ class Conversation(JSONMixin, SaveMixin):
             else:
                 response_type = Response.DEFERRED
 
-            dbg('Handling %s intent: %s' % (response_type, intent), color='white')
+            dbg('Handling %s intent: %s' % (response_type, intent.name), color='white')
             self.add_new_intent_message(tx, intent, response_type=response_type, entities=valid_entities)
 
         if not tx.response_messages:
@@ -990,13 +1023,17 @@ class Conversation(JSONMixin, SaveMixin):
         input = Input(input)
         tx.input = input
 
-        intent_response = self.understand(tx, input)
+        if input.type == 'action':
+            self.do_action(tx, input.value)
+        else:
+            intent_response = self.understand(tx, input)
+            self.process_intent_response(tx, intent_response)
 
-        self.process_intent_response(tx, intent_response)
-
-        context = {}
-        if self.active_intent:
-            context = self.get_filled_slots_by_intent(self.active_intent)
-        response_message = tx.format_response_message(context=context)
+        response_message = None
+        if tx.response_messages:
+            context = {}
+            if self.active_intent:
+                context = self.get_filled_slots_by_intent(self.active_intent)
+            response_message = tx.format_response_message(context=context)
 
         return response_message
