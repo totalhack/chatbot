@@ -16,7 +16,7 @@ SQLALCHEMY_TRACK_MODIFICATIONS = False
 
 ### LUIS account info
 LUIS_URL = '<my luis url>'
-LUIS_SUBKEY = '<my luis subkey>',
+LUIS_SUBKEY = '<my luis subkey>'
 
 ### App-specific overrides for messages (optional)
 APP_COMMON_MESSAGES = {
