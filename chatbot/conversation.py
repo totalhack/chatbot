@@ -417,6 +417,7 @@ class LUISResponse(IntentResponse):
             meta = INTENT_METADATA.get(name, {})
             intents.append(Intent(intent['intent'], intent['score'], **meta))
 
+        entities = []
         for entity in luis_json['entities']:
             entity['type'] = self.ENTITY_TRANSLATIONS.get(entity['type'], entity['type'])
             if 'resolution' in entity.keys():
@@ -428,12 +429,19 @@ class LUISResponse(IntentResponse):
             else:
                 entity['value'] = entity['entity']
 
+            # TODO: find a better home for special cases of filtering raw entities
+            if entity['type'] == 'fullname':
+                if '@' in entity['value']:
+                    warn('Skipping fullname entity with @ symbol: %s' % entity)
+                    continue
+            entities.append(entity)
+
         entity_handler_name = 'EntityHandler'
         if last_tx and last_tx.question and getattr(last_tx.question, 'entity_handler_name', None):
             entity_handler_name = last_tx.question.entity_handler_name or entity_handler_name
         entity_handler = get_entity_handler(entity_handler_name)
 
-        entities = entity_handler().process(luis_json['query'], luis_json['entities'])
+        entities = entity_handler().process(luis_json['query'], entities)
         super(LUISResponse, self).__init__(luis_json['query'], intents, entities=entities)
 
 class Input(PrintMixin, JSONMixin):
@@ -800,15 +808,22 @@ class Conversation(JSONMixin, SaveMixin):
         if not entities:
             return remaining_questions
 
+        follow_up_added = False
         if remaining_questions:
             for entity in entities:
                 if entity.slot_name in remaining_questions:
+                    slot = self.intents[intent.name].slots[entity.slot_name]
+                    if slot.follow_up and follow_up_added:
+                        warn('Not filling slot %s with additional follow-up %s' % (entity.slot_name, slot.follow_up.name))
+                        continue
+
                     filled_slot = self.fill_intent_slot(tx, intent, entity)
                     del remaining_questions[entity.slot_name]
                     if filled_slot.follow_up:
                         fu = filled_slot.follow_up
                         dbg('Adding follow-up %s' % fu.name, color='cyan')
                         remaining_questions.prepend(fu.name, fu)
+                        follow_up_added = True
 
             if not remaining_questions:
                 dbg('All slots filled by existing slot data', color='cyan')
