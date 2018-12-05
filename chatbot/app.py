@@ -75,7 +75,13 @@ def fulfillment():
     data = request.json
     dbg('fulfillment called', color='magenta')
     pprint(data)
-    response = {'status': 'success', 'response': None}
+    response = {'status': 'success', 'message': None}
+    #response = {'status': 'success', 'message': 'Great job, you finished this!'}
+    #response = {'status': 'success',
+    #            'message': {'type': 'question',
+    #                        'prompts': ['I couldnt find anyone to help. Would you like to try MyIntent instead?'],
+    #                        'intent_actions': {CommonIntents.CONFIRM_YES: 'TriggerMyIntent',
+    #                                           CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}}}
     return jsonr(response)
 
 if __name__ == "__main__":
