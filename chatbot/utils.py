@@ -12,6 +12,23 @@ def st():
     import pdb
     pdb.set_trace()
 
+# https://stackoverflow.com/questions/7204805/dictionaries-of-dictionaries-merge
+def dictmerge(a, b, path=None, overwrite=False):
+    if path is None: path = []
+    for key in b:
+        if key in a:
+            if isinstance(a[key], dict) and isinstance(b[key], dict):
+                dictmerge(a[key], b[key], path + [str(key)], overwrite=overwrite)
+            elif a[key] == b[key]:
+                pass # same leaf value
+            else:
+                if not overwrite:
+                    raise Exception('Conflict at %s' % '.'.join(path + [str(key)]))
+                a[key] = b[key]
+        else:
+            a[key] = b[key]
+    return a
+
 # https://stackoverflow.com/questions/16664874/how-can-i-add-an-element-at-the-top-of-an-ordereddict-in-python
 class OrderedDictPlus(OrderedDict):
     def prepend(self, key, value, dict_setitem=dict.__setitem__):

@@ -75,11 +75,11 @@ APP_INTENT_METADATA = {
 }
 
 ### App-specific tests picked up by test.py
-# Keys of the dict are the test names, values are a list of tuples that define
+# Keys of the TESTS dict are the test names, values are a list of tuples that define
 # what the user will say and what is expected back from the bot.
 #
-# Tuples have 1-3 arguments:
-# (input, expected intent in reply, expected message name in reply)
+# Tuples have 1-4 arguments:
+# (input, expected intent in reply, expected message name in reply, intent metadata override dict)
 # The input can be a string (i.e. user utterance) or a dictionary that specifies
 # a type of input such as a specific triggered intent.
 TESTS = {

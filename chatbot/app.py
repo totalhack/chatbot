@@ -28,6 +28,7 @@ def chat():
     debug = request.values.get('debug', None)
     try:
         input = json.loads(request.values['input'])
+        metadata = json.loads(request.values.get('metadata', '{}'))
         convo_id = request.values.get('conversation_id', None)
         dbg('Conversation ID: %s' % convo_id, color='green')
         dbg('Input: %s' % input, color='green')
@@ -39,7 +40,7 @@ def chat():
                 return jsonr(response)
         else:
             dbg('Creating new conversation', color='green')
-            convo = Conversation()
+            convo = Conversation(metadata=metadata)
             convo_id = convo.id
             convo.save()
 
@@ -76,12 +77,42 @@ def fulfillment():
     dbg('fulfillment called', color='magenta')
     pprint(data)
     response = {'status': 'success', 'message': None}
-    #response = {'status': 'success', 'message': 'Great job, you finished this!'}
-    #response = {'status': 'success',
-    #            'message': {'type': 'question',
-    #                        'prompts': ['I couldnt find anyone to help. Would you like to try MyIntent instead?'],
-    #                        'intent_actions': {CommonIntents.CONFIRM_YES: 'TriggerMyIntent',
-    #                                           CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}}}
+    return jsonr(response)
+
+@app.route('/fulfillment_with_message', methods=['POST'])
+def fulfillment_with_message():
+    data = request.json
+    dbg('fulfillment called', color='magenta')
+    pprint(data)
+    response = {'status': 'success', 'message': 'Great job, you finished this!'}
+    return jsonr(response)
+
+@app.route('/fulfillment_with_question', methods=['POST'])
+def fulfillment_with_question():
+    data = request.json
+    dbg('fulfillment called', color='magenta')
+    pprint(data)
+    response = {'status': 'success',
+                'message': {'type': 'question',
+                            'prompts': ['I couldnt find anyone to help. Would you like to try MyIntent instead?'],
+                            'intent_actions': {CommonIntents.CONFIRM_YES: 'TriggerMyIntent',
+                                               CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}}}
+    return jsonr(response)
+
+@app.route('/fulfillment_with_action', methods=['POST'])
+def fulfillment_with_action():
+    data = request.json
+    dbg('fulfillment called', color='magenta')
+    pprint(data)
+    response = {'status': 'success', 'message': 'Great job, you are done.', 'action': Actions.END_CONVERSATION}
+    return jsonr(response)
+
+@app.route('/fulfillment_with_error_status', methods=['POST'])
+def fulfillment_with_error_status():
+    data = request.json
+    dbg('fulfillment called', color='magenta')
+    pprint(data)
+    response = {'status': 'error', 'message': None, 'status_reason': 'Fulfillment failed'}
     return jsonr(response)
 
 if __name__ == "__main__":

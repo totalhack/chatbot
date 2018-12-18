@@ -9,10 +9,12 @@ from chatbot import app
 TESTS = app.config.get('TESTS', {})
 TEST_BASE_URL = app.config.get('TEST_BASE_URL', 'http://127.0.0.1:9000')
 
-def make_request(input_data, convo_id=None):
+def make_request(input_data, convo_id=None, intent_metadata=None):
     data = {'debug': 1}
-    if convo_id: data['conversation_id'] = convo_id
     data['input'] = json.dumps(input_data)
+    if convo_id: data['conversation_id'] = convo_id
+    if intent_metadata:
+        data['metadata'] = json.dumps({'INTENT_METADATA': intent_metadata})
     resp = requests.post(TEST_BASE_URL + '/chat', data=data)
     resp.raise_for_status()
     if 'Something went wrong' in resp.content:
@@ -48,20 +50,23 @@ class TestChatBot(unittest.TestCase):
         for i, message_tuple in enumerate(convo):
             expected_intent = None
             expected_message_name = None
+            intent_metadata = {}
             if len(message_tuple) == 1:
                 input_data = message_tuple[0]
             elif len(message_tuple) == 2:
                 input_data, expected_intent = message_tuple
             elif len(message_tuple) == 3:
                 input_data, expected_intent, expected_message_name = message_tuple
+            elif len(message_tuple) == 4:
+                input_data, expected_intent, expected_message_name, intent_metadata = message_tuple
             else:
                 assert False, 'Invalid message tuple: %s' % message_tuple
 
-            print '\n---- USER: %s' % input_data
-            resp = make_request(input_data, convo_id=self.convo_id)
+            print 'USER: %s' % input_data
+            resp = make_request(input_data, convo_id=self.convo_id, intent_metadata=intent_metadata)
             data = resp.json()
             assert data['status'] == 'success', 'Error: %s' % data
-            print 'BOT:', data['response']
+            print '\nBOT:', data['response']
 
             if not self.convo_id:
                 self.convo_id = data['conversation_id']
@@ -85,7 +90,8 @@ class TestChatBot(unittest.TestCase):
 if __name__ == '__main__':
     if len(sys.argv) > 1:
         suite = unittest.TestSuite()
-        suite.addTest(TestChatBot(sys.argv[1]))
+        for testname in sys.argv[1:]:
+            suite.addTest(TestChatBot(testname))
     else:
         suite = unittest.TestLoader().loadTestsFromTestCase(TestChatBot)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
