@@ -1,3 +1,4 @@
+from cachetools import LRUCache
 from collections import OrderedDict
 import copy
 from importlib import import_module
@@ -10,6 +11,11 @@ import usaddress
 
 from chatbot.model import *
 from chatbot.utils import *
+
+# TODO: replace with an external cache
+CACHE_SIZE = 1000
+NLU_CACHE = LRUCache(CACHE_SIZE)
+warn('Replace NLU cache for production!')
 
 INTENT_FILTER_THRESHOLD = 0.50
 ENTITY_FILTER_THRESHOLD = 0.50
@@ -148,6 +154,12 @@ def get_entity_handler(name):
     return getattr(import_module(module_name), object_name)
 
 def luis(query, staging=True, verbose=True):
+    key = (query, staging, verbose)
+    nlu_result = NLU_CACHE.get(key, None)
+    if nlu_result:
+        dbg('Using cached NLU result for key %s' % str(key))
+        return nlu_result
+
     params = {
         'subscription-key': current_app.config['LUIS_SUBKEY'],
         'staging': 'true' if staging else 'false',
@@ -157,7 +169,9 @@ def luis(query, staging=True, verbose=True):
     }
     resp = requests.get(current_app.config['LUIS_URL'], params=params)
     resp.raise_for_status()
-    return resp.json()
+    result = resp.json()
+    NLU_CACHE[key] = result
+    return result
 
 class Message(PrintMixin, JSONMixin):
     repr_attrs = ['name']

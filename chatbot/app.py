@@ -15,9 +15,10 @@ db.init_app(app)
 set_app_data_from_config(app.config)
 
 # TODO: replace with an external cache
-CACHE_SIZE = 100
+CACHE_SIZE = 1000
 CACHE_TTL = 3600*48
 CONVO_CACHE = TTLCache(CACHE_SIZE, CACHE_TTL)
+warn('Replace conversation cache for production!')
 
 @app.route('/')
 def home():
