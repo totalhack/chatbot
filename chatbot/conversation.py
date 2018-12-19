@@ -58,9 +58,10 @@ COMMON_MESSAGES = {
                            CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}
     },
 
-    'intent_aborted': [
-        "I'm sorry, I'm unable to help you at this time",
-    ],
+    'intent_aborted': {
+        'prompts': ["I'm sorry, I'm unable to help you at this time"],
+        'action': Actions.END_CONVERSATION,
+    },
 
     'goodbye': [
         "Thanks. Have a nice day!"
@@ -636,30 +637,6 @@ class Transaction(JSONMixin, SaveMixin):
                                   expected_entities=getattr(msg, 'entity_actions', None),
                                   expected_intents=getattr(msg, 'intent_actions', None))
 
-    def add_common_response_message(self, metadata, message_name):
-        message_info = metadata['COMMON_MESSAGES'][message_name]
-        message = None
-        expected_entities = None
-        expected_intents = None
-
-        if not message_info:
-            pass
-        elif type(message_info) == str:
-            message = message_info
-        elif type(message_info) in (list, tuple):
-            message = random.choice(message_info)
-        else:
-            message = random.choice(message_info['prompts'])
-            expected_entities = message_info.get('entity_actions', None)
-            expected_intents = message_info.get('intent_actions', None)
-            if expected_intents:
-                # XXX: Can this be made unnecessary when processing expected_intents?
-                for intent in metadata['INTENT_METADATA'].keys():
-                    if intent not in expected_intents:
-                        expected_intents[intent] = Actions.NONE
-
-        self.add_response_message(message_name, message, expected_entities=expected_entities, expected_intents=expected_intents)
-
     def format_response_message(self, context={}):
         response_message = ' '.join([x for x in self.response_messages.values() if x])
         if '{' in response_message or '}' in response_message:
@@ -749,7 +726,7 @@ class Conversation(JSONMixin, SaveMixin):
         elif action == Actions.END_CONVERSATION:
             self.completed = True
             if not skip_common_messages:
-                tx.add_common_response_message(self.metadata, 'goodbye')
+                self.add_common_response_message(tx, self.metadata, 'goodbye')
 
         elif action == Actions.REPLACE_SLOT:
             last_tx = self.get_last_transaction()
@@ -871,7 +848,7 @@ class Conversation(JSONMixin, SaveMixin):
 
     def abort_intent(self, tx, intent):
         tx.abort_intent(intent)
-        tx.add_common_response_message(self.metadata, 'intent_aborted')
+        self.add_common_response_message(tx, self.metadata, 'intent_aborted')
         self.clear_question_attempts(intent)
         self.remove_active_intent(intent)
 
@@ -1030,6 +1007,35 @@ class Conversation(JSONMixin, SaveMixin):
         if response: tx.add_response_message('%s:%s' % (intent.name, response_type), response)
         if prompt: tx.add_response_message('%s:%s' % (intent.name, question.name), prompt)
 
+    def add_common_response_message(self, tx, metadata, message_name):
+        message_info = metadata['COMMON_MESSAGES'][message_name]
+        message = None
+        expected_entities = None
+        expected_intents = None
+
+        if not message_info:
+            pass
+        elif type(message_info) == str:
+            message = message_info
+        elif type(message_info) in (list, tuple):
+            message = random.choice(message_info)
+        else:
+            message = random.choice(message_info['prompts'])
+            expected_entities = message_info.get('entity_actions', None)
+            expected_intents = message_info.get('intent_actions', None)
+            action = message_info.get('action', None)
+
+            if expected_intents:
+                # XXX: Can this be made unnecessary when processing expected_intents?
+                for intent in metadata['INTENT_METADATA'].keys():
+                    if intent not in expected_intents:
+                        expected_intents[intent] = Actions.NONE
+
+            if action:
+                self.do_action(tx, action, skip_common_messages=True if message else False)
+
+        tx.add_response_message(message_name, message, expected_entities=expected_entities, expected_intents=expected_intents)
+
     def create_response_message(self, tx, valid_intents, valid_entities):
         last_tx = self.get_last_transaction()
 
@@ -1057,12 +1063,12 @@ class Conversation(JSONMixin, SaveMixin):
                     if last_tx:
                         self.repeat_transaction(tx, last_tx, reason='user request')
                     else:
-                        tx.add_common_response_message(self.metadata, 'fallback')
+                        self.add_common_response_message(tx, self.metadata, 'fallback')
                     return
 
                 if intent.name == CommonIntents.HELP:
                     dbg('Help Intent', color='white')
-                    tx.add_common_response_message(self.metadata, 'help')
+                    self.add_common_response_message(tx, self.metadata, 'help')
                     return
             else:
                 self.add_active_intent(intent)
@@ -1131,9 +1137,9 @@ class Conversation(JSONMixin, SaveMixin):
 
         if not tx.response_messages:
             if tx.completed_intent or (self.completed_intents and not self.active_intents):
-                tx.add_common_response_message(self.metadata, 'intents_complete')
+                self.add_common_response_message(tx, self.metadata, 'intents_complete')
             else:
-                tx.add_common_response_message(self.metadata, 'fallback')
+                self.add_common_response_message(tx, self.metadata, 'fallback')
 
     def process_intent_response(self, tx, intent_response):
         valid_intents, valid_entities = intent_response.get_valid()
