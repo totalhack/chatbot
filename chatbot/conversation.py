@@ -22,19 +22,21 @@ ENTITY_FILTER_THRESHOLD = 0.50
 MAX_QUESTION_ATTEMPTS = 2
 
 class CommonIntents(object):
-    REPEAT = 'Repeat'
+    CANCEL = 'Cancel'
     CONFIRM_YES = 'ConfirmYes'
     CONFIRM_NO = 'ConfirmNo'
     HELP = 'Help'
     NONE = 'None'
+    REPEAT = 'Repeat'
     WELCOME = 'Welcome'
 
 class ResponseType(object):
     ACTIVE = 'active'
-    RESUMED = 'resumed'
     DEFERRED = 'deferred'
+    RESUMED = 'resumed'
 
 class Actions(object):
+    CANCEL_INTENT = 'cancel_intent'
     END_CONVERSATION = 'end_conversation'
     NONE = 'none'
     REPEAT = 'repeat'
@@ -63,19 +65,24 @@ COMMON_MESSAGES = {
         'action': Actions.END_CONVERSATION,
     },
 
+    'intent_canceled': {
+        'prompts': [
+            "Are you sure you want to cancel the current intent?",
+        ],
+        'intent_actions': {CommonIntents.CONFIRM_YES: Actions.CANCEL_INTENT,
+                           CommonIntents.CONFIRM_NO: Actions.NONE}
+    },
+
     'goodbye': [
         "Thanks. Have a nice day!"
     ]
 }
 
 INTENT_METADATA = {
-    CommonIntents.WELCOME: {
-        'responses': {
-            ResponseType.ACTIVE: [
-                'Hi, how are you?',
-            ],
-        },
-        'is_greeting': True,
+    CommonIntents.CANCEL: {
+        'repeatable': True,
+        'preemptive': True,
+        'is_answer': False
     },
 
     CommonIntents.CONFIRM_NO: {
@@ -100,6 +107,15 @@ INTENT_METADATA = {
         'repeatable': True,
         'preemptive': True,
         'is_answer': False
+    },
+
+    CommonIntents.WELCOME: {
+        'responses': {
+            ResponseType.ACTIVE: [
+                'Hi, how are you?',
+            ],
+        },
+        'is_greeting': True,
     },
 }
 
@@ -565,6 +581,7 @@ class Transaction(JSONMixin, SaveMixin):
                   'active_intent',
                   'new_intents',
                   'aborted_intents',
+                  'canceled_intents',
                   'completed_intent',
                   'expected_entities',
                   'expected_intents',
@@ -590,6 +607,7 @@ class Transaction(JSONMixin, SaveMixin):
         self.active_intent = None
         self.new_intents = []
         self.aborted_intents = []
+        self.canceled_intents = []
         self.completed_intent = None
         self.expected_entities = None
         self.expected_intents = None
@@ -614,6 +632,10 @@ class Transaction(JSONMixin, SaveMixin):
     def abort_intent(self, intent):
         dbg('Aborting intent: %s' % intent.name, color='magenta')
         self.aborted_intents.append(intent)
+
+    def cancel_intent(self, intent):
+        dbg('Canceling intent: %s' % intent.name, color='magenta')
+        self.canceled_intents.append(intent)
 
     def add_response_message(self, message_name, message, expected_entities=None, expected_intents=None, expected_text=None):
         self.response_messages[message_name] = message
@@ -722,6 +744,9 @@ class Conversation(JSONMixin, SaveMixin):
 
         if action == Actions.NONE:
             pass
+
+        elif action == Actions.CANCEL_INTENT:
+            self.cancel_intent(tx)
 
         elif action == Actions.END_CONVERSATION:
             self.completed = True
@@ -836,7 +861,7 @@ class Conversation(JSONMixin, SaveMixin):
 
         if not self.add_question_attempt(self.active_intent, question):
             # We've asked this question the max number of times already
-            self.abort_intent(tx, self.active_intent)
+            self.abort_intent(tx)
             return None, None
 
         tx.question = question
@@ -846,11 +871,22 @@ class Conversation(JSONMixin, SaveMixin):
     def get_question_and_prompt(self, tx, question):
         return self.get_next_question_and_prompt(tx, MessageGroup([(question.name, question)]))
 
-    def abort_intent(self, tx, intent):
-        tx.abort_intent(intent)
+    def abort_intent(self, tx):
+        if not self.active_intent:
+            error('Trying to abort intent but no intent is active on conversation')
+            return
+        tx.abort_intent(self.active_intent)
         self.add_common_response_message(tx, self.metadata, 'intent_aborted')
-        self.clear_question_attempts(intent)
-        self.remove_active_intent(intent)
+        self.clear_question_attempts(self.active_intent)
+        self.remove_active_intent(self.active_intent)
+
+    def cancel_intent(self, tx):
+        if not self.active_intent:
+            error('Trying to cancel intent but no intent is active on conversation')
+            return
+        tx.cancel_intent(self.active_intent)
+        self.clear_question_attempts(self.active_intent)
+        self.remove_active_intent(self.active_intent)
 
     # TODO: manage data structure instead of rebuilding?
     def get_filled_slots(self):
@@ -938,12 +974,14 @@ class Conversation(JSONMixin, SaveMixin):
     def add_active_intent(self, intent):
         if not intent.repeatable:
             assert intent.name not in self.intents, 'Intent is not repeatable: %s' % intent.name
+        dbg('Adding active intent %s' % intent.name, color='cyan')
         self.intents[intent.name] = intent
         self.active_intents[intent.name] = intent
 
     def prepend_active_intent(self, intent):
         if not intent.repeatable:
             assert intent.name not in self.intents, 'Intent is not repeatable: %s' % intent.name
+        dbg('Prepending active intent %s' % intent.name, color='cyan')
         self.intents[intent.name] = intent
         self.active_intents.prepend(intent.name, intent)
 
@@ -1058,6 +1096,11 @@ class Conversation(JSONMixin, SaveMixin):
                 self.prepend_active_intent(intent)
                 tx.prepend_new_intent(intent)
 
+                if intent.name == CommonIntents.CANCEL:
+                    dbg('Cancel Intent', color='white')
+                    self.add_common_response_message(tx, self.metadata, 'intent_canceled')
+                    return
+
                 if intent.name == CommonIntents.REPEAT:
                     dbg('Repeat Intent', color='white')
                     if last_tx:
@@ -1089,13 +1132,17 @@ class Conversation(JSONMixin, SaveMixin):
                 if self.transaction_repeatable(last_tx):
                     self.repeat_transaction(tx, last_tx, reason='last transaction not answered')
                 else:
-                    self.abort_intent(tx, self.active_intent)
+                    self.abort_intent(tx)
                 return
 
         # All one-off and preemptive intents should have been handled before this
         for intent in self.active_intents.values():
             if intent.is_answer:
-                dbg('Removing is_answer intents from active list: %s' % intent.name, color='white')
+                dbg('Removing is_answer intent from active list: %s' % intent.name, color='white')
+                self.remove_active_intent(intent)
+            elif intent.preemptive and not intent.slots:
+                # We assume these already displayed any relevant message
+                dbg('Removing preemptive intent with no slots from active list: %s' % intent.name, color='white')
                 self.remove_active_intent(intent)
 
         # Handle ongoing intent
