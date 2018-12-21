@@ -474,7 +474,7 @@ class IntentResponse(PrintMixin, JSONMixin):
         self.entities = entities or []
 
     def filter_intents(self, score):
-        return [x for x in self.intents if (x.score is None or x.score > score)]
+        return [x for x in self.intents if ((x.score is None or x.score > score) and x.name != 'None')]
 
     def filter_entities(self, score):
         return [x for x in self.entities if (x.score is None or x.score > score)]
