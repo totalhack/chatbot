@@ -39,6 +39,9 @@ def chat():
             if not convo:
                 response = {'status': 'error', 'response': 'No conversation found for ID %s' % convo_id}
                 return jsonr(response)
+            if convo.completed:
+                response = {'status': 'error', 'response': 'Conversation %s is already completed' % convo_id}
+                return jsonr(response)
         else:
             dbg('Creating new conversation', color='green')
             convo = Conversation(metadata=metadata)
