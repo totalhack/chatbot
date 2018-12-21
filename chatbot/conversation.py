@@ -121,6 +121,7 @@ INTENT_METADATA = {
 
 ENTITY_HANDLERS = {
     'address': 'AddressEntityHandler',
+    'street_address': 'AddressEntityHandler',
 }
 
 DEFAULT_FOLLOW_UP_ACTIONS = {
@@ -423,15 +424,34 @@ class AddressEntityHandler(EntityHandler):
             return entities
 
         address_dict = OrderedDict([(v,k) for k,v in address])
-
+        address_entities = []
         address_parts = []
-        for label in usaddress.LABELS:
+        address_part_map = {
+            # TODO: what if there is more to the address, such as unit number?
+            'AddressNumber': 'street_number',
+            'StreetName': 'street_name',
+            'StreetNamePostType': 'street_type',
+            'PlaceName': 'city',
+            'StateName': 'state',
+        }
+
+        street_address_parts = []
+        for label, value in address_dict.items():
             if label in ['Recipient', 'NotAddress']:
                 continue
-            part = address_dict.get(label, None)
-            if not part:
-                continue
-            address_parts.append(part)
+            if label in ['AddressNumber', 'StreetName', 'StreetNamePostType']:
+                street_address_parts.append(value)
+
+            address_parts.append(value)
+            if label in address_part_map:
+                address_part_name = address_part_map[label]
+                entity = Entity(name=address_part_name,
+                                type=address_part_name,
+                                start_index=None,
+                                end_index=None,
+                                score=None,
+                                value=value)
+                address_entities.append(entity)
 
         address_value = ' '.join(address_parts)
         address_entity = Entity(name='address',
@@ -440,8 +460,20 @@ class AddressEntityHandler(EntityHandler):
                                 end_index=None,
                                 score=None,
                                 value=address_value)
-
         entities.insert(0, address_entity)
+
+        street_address_value = ' '.join(street_address_parts)
+        street_address_entity = Entity(name='street_address',
+                                       type='street_address',
+                                       start_index=None,
+                                       end_index=None,
+                                       score=None,
+                                       value=street_address_value)
+        entities.insert(1, street_address_entity)
+
+        for entity in address_entities:
+            entities.insert(1, entity)
+
         return entities
 
 class FulfillmentResponse(PrintMixin, JSONMixin):
