@@ -37,7 +37,7 @@ class Fulfillments(TimestampMixin, db.Model):
     conversation_id = db.Column(db.String(50), db.ForeignKey('conversations.id'), nullable=False)
     conversation = db.relationship('Conversations', backref=db.backref('fulfillments', lazy=True))
     url = db.Column(db.String(400), nullable=False)
-    status_code = db.Column(db.Integer, nullable=False)
+    status_code = db.Column(db.Integer, nullable=True)
     response = db.Column(db.Text, nullable=False)
     data = db.Column(db.Text, nullable=False)
 

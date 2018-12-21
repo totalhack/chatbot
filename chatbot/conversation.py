@@ -357,16 +357,22 @@ class Intent(PrintMixin, JSONMixin):
         dbg('Handling fulfillment for intent %s: %s' % (self.name, self.fulfillment), color='white')
         url = self.fulfillment['url']
         headers = {'Content-type': 'application/json'}
+        status_code = None
 
         try:
             resp = requests.post(url, json=fulfillment_data)
+            status_code = resp.status_code
+            content = resp.content
             resp.raise_for_status() # TODO: how should a failure here be handled on the front end?
             return FulfillmentResponse('%s_fulfillment' % self.name, **resp.json())
+        except Exception, e:
+            content = str(e)
+            raise
         finally:
             ff = Fulfillments(conversation_id=convo.id,
                               url=url,
-                              status_code=resp.status_code,
-                              response=resp.content,
+                              status_code=status_code,
+                              response=content,
                               data=json.dumps(fulfillment_data))
             db.session.merge(ff)
             db.session.commit()
