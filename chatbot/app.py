@@ -9,10 +9,11 @@ import traceback
 
 from chatbot import app
 from chatbot.conversation import *
+from chatbot.metadata import *
 from chatbot.utils import *
 
 db.init_app(app)
-set_app_data_from_config(app.config)
+load_bot_metadata(app.config)
 
 # TODO: replace with an external cache
 CACHE_SIZE = 1000
@@ -29,9 +30,10 @@ def chat():
     debug = request.values.get('debug', None)
     try:
         input = json.loads(request.values['input'])
+        bot = request.values['bot']
         metadata = json.loads(request.values.get('metadata', '{}'))
         convo_id = request.values.get('conversation_id', None)
-        dbg('Conversation ID: %s' % convo_id, color='green')
+        dbg('Conversation ID: %s / Bot: %s' % (convo_id, bot), color='green')
         dbg('Input: %s' % input, color='green')
 
         if convo_id:
@@ -44,7 +46,7 @@ def chat():
                 return jsonr(response)
         else:
             dbg('Creating new conversation', color='green')
-            convo = Conversation(metadata=metadata)
+            convo = Conversation(bot, metadata=metadata)
             convo_id = convo.id
             convo.save()
 
@@ -99,8 +101,8 @@ def fulfillment_with_question():
     response = {'status': 'success',
                 'message': {'type': 'question',
                             'prompts': ['I couldnt find anyone to help. Would you like to try MyIntent instead?'],
-                            'intent_actions': {CommonIntents.CONFIRM_YES: 'TriggerMyIntent',
-                                               CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}}}
+                            'intent_actions': {CommonIntents.ConfirmYes: 'TriggerMyIntent',
+                                               CommonIntents.ConfirmNo: Actions.EndConversation}}}
     return jsonr(response)
 
 @app.route('/fulfillment_with_action', methods=['POST'])
@@ -108,7 +110,7 @@ def fulfillment_with_action():
     data = request.json
     dbg('fulfillment called', color='magenta')
     pprint(data)
-    response = {'status': 'success', 'message': 'Great job, you are done.', 'action': Actions.END_CONVERSATION}
+    response = {'status': 'success', 'message': 'Great job, you are done.', 'action': Actions.EndConversation}
     return jsonr(response)
 
 @app.route('/fulfillment_with_error_status', methods=['POST'])

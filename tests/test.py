@@ -6,12 +6,17 @@ import sys
 import unittest
 
 from chatbot import app
-TESTS = app.config.get('TESTS', {})
+from chatbot.metadata import *
+
+load_bot_metadata(app.config, load_tests=True)
+assert BOT_METADATA
+
 TEST_BASE_URL = app.config.get('TEST_BASE_URL', 'http://127.0.0.1:9000')
 
-def make_request(input_data, convo_id=None, intent_metadata=None):
-    data = {'debug': 1}
-    data['input'] = json.dumps(input_data)
+def make_request(bot, input_data, convo_id=None, intent_metadata=None):
+    data = {'debug': 1,
+            'bot': bot,
+            'input': json.dumps(input_data)}
     if convo_id: data['conversation_id'] = convo_id
     if intent_metadata:
         data['metadata'] = json.dumps({'INTENT_METADATA': intent_metadata})
@@ -22,19 +27,23 @@ def make_request(input_data, convo_id=None, intent_metadata=None):
         raise Exception('Something went wrong')
     return resp
 
+def clean_name(name):
+    return name.replace(' ', '_').replace('-', '_')
+
 # https://stackoverflow.com/questions/32899/how-do-you-generate-dynamic-parametrized-unit-tests-in-python
 class TestChatBotMeta(type):
-    def __new__(mcs, name, bases, dict):
-        def gen_test(convo):
+    def __new__(mcs, name, bases, test_dict):
+        def gen_test(bot, convo):
             def test(self):
-                self.converse(convo)
+                self.converse(bot, convo)
             return test
 
-        for tname, convo in TESTS.items():
-            test_name = "test%s" % tname
-            dict[test_name] = gen_test(convo)
+        for bot, bot_metadata in BOT_METADATA.items():
+            for tname, convo in bot_metadata.get('TESTS', {}).items():
+                test_name = "test%s%s" % (clean_name(bot).title(), clean_name(tname))
+                test_dict[test_name] = gen_test(bot, convo)
 
-        return type.__new__(mcs, name, bases, dict)
+        return type.__new__(mcs, name, bases, test_dict)
 
 class TestChatBot(unittest.TestCase):
     __metaclass__ = TestChatBotMeta
@@ -45,8 +54,8 @@ class TestChatBot(unittest.TestCase):
     def tearDown(self):
         self.convo_id = None
 
-    def converse(self, convo):
-        print '---- Convo ID: %s' % self.convo_id
+    def converse(self, bot, convo):
+        print '---- Bot: %s Convo ID: %s' % (bot, self.convo_id)
         for i, message_tuple in enumerate(convo):
             expected_intent = None
             expected_message_name = None
@@ -63,7 +72,7 @@ class TestChatBot(unittest.TestCase):
                 assert False, 'Invalid message tuple: %s' % message_tuple
 
             print 'USER: %s' % input_data
-            resp = make_request(input_data, convo_id=self.convo_id, intent_metadata=intent_metadata)
+            resp = make_request(bot, input_data, convo_id=self.convo_id, intent_metadata=intent_metadata)
             data = resp.json()
             assert data['status'] == 'success', 'Error: %s' % data
             print '\nBOT:', data['response']

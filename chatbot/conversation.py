@@ -9,155 +9,24 @@ import uuid
 from flask import current_app
 import usaddress
 
+from chatbot.core import *
+from chatbot.metadata import *
 from chatbot.model import *
 from chatbot.utils import *
 
 # TODO: replace with an external cache
-CACHE_SIZE = 1000
-NLU_CACHE = LRUCache(CACHE_SIZE)
+NLU_CACHE_SIZE = 1000
+NLU_CACHE = LRUCache(NLU_CACHE_SIZE)
 warn('Replace NLU cache for production!')
 
 INTENT_FILTER_THRESHOLD = 0.50
 ENTITY_FILTER_THRESHOLD = 0.50
 MAX_QUESTION_ATTEMPTS = 2
 
-class CommonIntents(object):
-    CANCEL = 'Cancel'
-    CONFIRM_YES = 'ConfirmYes'
-    CONFIRM_NO = 'ConfirmNo'
-    HELP = 'Help'
-    NONE = 'None'
-    REPEAT = 'Repeat'
-    WELCOME = 'Welcome'
-
-class ResponseType(object):
-    ACTIVE = 'active'
-    DEFERRED = 'deferred'
-    RESUMED = 'resumed'
-
-class Actions(object):
-    CANCEL_INTENT = 'cancel_intent'
-    END_CONVERSATION = 'end_conversation'
-    NONE = 'none'
-    REPEAT = 'repeat'
-    REPEAT_SLOT = 'repeat_slot'
-    REPLACE_SLOT = 'replace_slot'
-
-COMMON_MESSAGES = {
-    'fallback': [
-        "Sorry, I didn't get that",
-    ],
-
-    'help': [
-        "Stil need to add a help message",
-    ],
-
-    'intents_complete': {
-        'prompts': [
-            "Is there anything else I can help you with today?",
-        ],
-        'intent_actions': {CommonIntents.CONFIRM_YES: Actions.NONE,
-                           CommonIntents.CONFIRM_NO: Actions.END_CONVERSATION}
-    },
-
-    'intent_aborted': {
-        'prompts': ["I'm sorry, I'm unable to help you at this time"],
-        'action': Actions.END_CONVERSATION,
-    },
-
-    'intent_canceled': {
-        'prompts': [
-            "Are you sure you want to cancel the current intent?",
-        ],
-        'intent_actions': {CommonIntents.CONFIRM_YES: Actions.CANCEL_INTENT,
-                           CommonIntents.CONFIRM_NO: Actions.NONE}
-    },
-
-    'goodbye': [
-        "Thanks. Have a nice day!"
-    ]
-}
-
-INTENT_METADATA = {
-    CommonIntents.CANCEL: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': False
-    },
-
-    CommonIntents.CONFIRM_NO: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': True
-    },
-
-    CommonIntents.CONFIRM_YES: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': True
-    },
-
-    CommonIntents.HELP: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': False
-    },
-
-    CommonIntents.REPEAT: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': False
-    },
-
-    CommonIntents.WELCOME: {
-        'responses': {
-            ResponseType.ACTIVE: [
-                'Hi, how are you?',
-            ],
-        },
-        'is_greeting': True,
-    },
-}
-
-ENTITY_HANDLERS = {
-    'address': 'AddressEntityHandler',
-    'street_address': 'AddressEntityHandler',
-}
-
 DEFAULT_FOLLOW_UP_ACTIONS = {
-    CommonIntents.CONFIRM_YES: Actions.NONE,
-    CommonIntents.CONFIRM_NO: Actions.REPEAT_SLOT,
+    CommonIntents.ConfirmYes: Actions.NoAction,
+    CommonIntents.ConfirmNo: Actions.RepeatSlot,
 }
-
-APP_INTENT_METADATA = None
-APP_ENTITY_HANDLERS = None
-APP_COMMON_MESSAGES = None
-
-def set_app_data_from_config(config):
-    global APP_INTENT_METADATA
-    APP_INTENT_METADATA = config.get('APP_INTENT_METADATA', {})
-    INTENT_METADATA.update(APP_INTENT_METADATA)
-
-    global APP_ENTITY_HANDLERS
-    APP_ENTITY_HANDLERS = config.get('APP_ENTITY_HANDLERS', {})
-    ENTITY_HANDLERS.update(APP_ENTITY_HANDLERS)
-
-    global APP_COMMON_MESSAGES
-    APP_COMMON_MESSAGES = config.get('APP_COMMON_MESSAGES', {})
-    COMMON_MESSAGES.update(APP_COMMON_MESSAGES)
-
-def set_intent_metdata(metadata):
-    global INTENT_METADATA
-    INTENT_METADATA = metadata
-
-def update_intent_metdata(updates):
-    global INTENT_METADATA
-    dictmerge(INTENT_METADATA, updates, overwrite=True)
-
-def get_default_metadata():
-    return dict(INTENT_METADATA=INTENT_METADATA,
-                ENTITY_HANDLERS=ENTITY_HANDLERS,
-                COMMON_MESSAGES=COMMON_MESSAGES)
 
 def assert_valid_intent_name(metadata, intent_name):
     assert intent_name in metadata['INTENT_METADATA'], 'Invalid intent name: %s' % intent_name
@@ -233,10 +102,10 @@ class Question(Message):
         super(Question, self).__init__(name, prompts)
         self.intent_actions = intent_actions
         if intent_actions:
-            assert type(intent_actions) == dict, 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
+            assert isinstance(intent_actions, dict), 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
         self.entity_actions = entity_actions
         if entity_actions:
-            assert type(entity_actions) == dict, 'Invalid type for entity_actions, must be dict: %s' % type(entity_actions)
+            assert isinstance(entity_actions, dict), 'Invalid type for entity_actions, must be dict: %s' % type(entity_actions)
 
     def get_intent_actions(self):
         return self.intent_actions
@@ -249,7 +118,7 @@ class Slot(Question):
 
     @classmethod
     def from_dict(cls, metadata, slot_name, slot_info):
-        assert type(slot_info) == dict, 'Invalid type for slot_info, must be dict: %s' % type(slot_info)
+        assert isinstance(slot_info, dict), 'Invalid type for slot_info, must be dict: %s' % type(slot_info)
         prompts = slot_info['prompts']
 
         follow_up_info = slot_info.get('follow_up', {})
@@ -293,7 +162,7 @@ class FollowUp(Question):
 
     @classmethod
     def from_dict(cls, slot_name, follow_up_info):
-        assert type(follow_up_info) == dict, 'Invalid type for follow up info, must be dict: %s' % type(follow_up_info)
+        assert isinstance(follow_up_info, dict), 'Invalid type for follow up info, must be dict: %s' % type(follow_up_info)
         follow_up = None
         if follow_up_info:
             follow_up_name = '%s_follow_up' % slot_name
@@ -301,7 +170,7 @@ class FollowUp(Question):
             # TODO: This may be overly simplistic. What if the same slot entity
             # is mentioned but doesnt need replacing? This may hijack the processing of
             # that message.
-            entity_actions = {slot_name: Actions.REPLACE_SLOT}
+            entity_actions = {slot_name: Actions.ReplaceSlot}
             follow_up = cls(follow_up_name, follow_up_info['prompts'],
                             intent_actions=follow_up_info.get('intent_actions', DEFAULT_FOLLOW_UP_ACTIONS),
                             entity_actions=entity_actions)
@@ -311,7 +180,7 @@ class Intent(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'score']
 
     def __init__(self, metadata, name, score, responses=None, slots=None, repeatable=False, preemptive=False, fulfillment=None, is_answer=False, is_greeting=False):
-        self.name =name
+        self.name = name
         self.score = score
         self.repeatable = repeatable
         self.preemptive = preemptive
@@ -322,7 +191,7 @@ class Intent(PrintMixin, JSONMixin):
         self.responses = {}
         if responses:
             for response_type, response_texts in responses.items():
-                assert response_type in (ResponseType.ACTIVE, ResponseType.RESUMED, ResponseType.DEFERRED), 'Invalid response type: %s' % response_type
+                assert response_type in (ResponseType.Active, ResponseType.Resumed, ResponseType.Deferred), 'Invalid response type: %s' % response_type
                 assert type(response_texts) in (tuple, list)
                 self.responses[response_type] = response_texts
 
@@ -490,7 +359,7 @@ class FulfillmentResponse(PrintMixin, JSONMixin):
         if message:
             if type(message) in (str, unicode):
                 self.message = Message(name, [message])
-            elif type(message) == dict:
+            elif isinstance(message, dict):
                 message['name'] = message.get('name', name)
                 self.message = message_from_dict(message)
             else:
@@ -535,7 +404,7 @@ class TriggeredIntentResponse(IntentResponse):
 
         entities = []
         if context:
-            assert type(context) == dict, 'Invalid context: %s' % context
+            assert isinstance(context, dict), 'Invalid context: %s' % context
             for k,v in context.items():
                 entities.append(Entity(name=k, type=k, value=v))
 
@@ -600,7 +469,7 @@ class Input(PrintMixin, JSONMixin):
         if type(input) in (str, unicode):
             self.type = 'text'
             self.value = input
-        elif type(input) == dict:
+        elif isinstance(input, dict):
             self.type = input['type']
             self.value = input['value']
             self.context = input.get('context', {})
@@ -682,13 +551,13 @@ class Transaction(JSONMixin, SaveMixin):
             assert not self.requires_answer(), 'A transaction can only require a single answer'
 
         if expected_entities:
-            assert type(expected_entities) == dict
+            assert isinstance(expected_entities, dict)
             self.expected_entities = expected_entities
         if expected_intents:
-            assert type(expected_intents) == dict
+            assert isinstance(expected_intents, dict)
             self.expected_intents = expected_intents
         if expected_text:
-            assert type(expected_text) == dict
+            assert isinstance(expected_text, dict)
             self.expected_text = expected_text
 
     # This method and friends probably need to be refactored
@@ -747,6 +616,7 @@ class Transaction(JSONMixin, SaveMixin):
 
 class Conversation(JSONMixin, SaveMixin):
     save_attrs = ['id',
+                  'bot',
                   'nlu',
                   'intents',
                   'active_intents',
@@ -754,9 +624,10 @@ class Conversation(JSONMixin, SaveMixin):
                   'active_intent',
                   'question_attempts']
 
-    def __init__(self, metadata=None, nlu='luis'):
+    def __init__(self, bot, metadata=None, nlu='luis'):
         self.id = str(uuid.uuid4())
-        self.metadata = get_default_metadata()
+        self.bot = bot
+        self.metadata = get_bot_metadata(bot)
         if metadata:
             dbg('Updating conversation metadata: %s' % metadata, color='magenta')
             self.metadata = dictmerge(copy.deepcopy(self.metadata), metadata, overwrite=True)
@@ -780,18 +651,18 @@ class Conversation(JSONMixin, SaveMixin):
     def do_action(self, tx, action, valid_entities=None, valid_intents=None, skip_common_messages=False):
         dbg('Do action %s' % action, color='magenta')
 
-        if action == Actions.NONE:
+        if action == Actions.NoAction:
             pass
 
-        elif action == Actions.CANCEL_INTENT:
+        elif action == Actions.CancelIntent:
             self.cancel_intent(tx)
 
-        elif action == Actions.END_CONVERSATION:
+        elif action == Actions.EndConversation:
             self.completed = True
             if not skip_common_messages:
                 self.add_common_response_message(tx, self.metadata, 'goodbye')
 
-        elif action == Actions.REPLACE_SLOT:
+        elif action == Actions.ReplaceSlot:
             last_tx = self.get_last_transaction()
             slots_filled = last_tx.slots_filled
             assert slots_filled, 'Trying to replace slot but no slot filled on previous transaction'
@@ -812,7 +683,7 @@ class Conversation(JSONMixin, SaveMixin):
                                                 expected_entities=question.entity_actions,
                                                 expected_intents=question.intent_actions)
 
-        elif action == Actions.REPEAT_SLOT:
+        elif action == Actions.RepeatSlot:
             last_tx = self.get_last_transaction()
             slots_filled = last_tx.slots_filled
             assert slots_filled, 'Trying to repeat slot but no slot filled on previous transaction'
@@ -1056,14 +927,16 @@ class Conversation(JSONMixin, SaveMixin):
         if intent.name in self.completed_intents:
             del self.completed_intents[intent.name]
 
-    def add_new_intent_message(self, tx, intent, response_type=ResponseType.ACTIVE, entities=None):
+    def add_new_intent_message(self, tx, intent, response_type=None, entities=None):
         '''Gets the message(s) at the start of a new intent'''
+        if not response_type:
+            response_type = ResponseType.Active
         response = random.choice(intent.responses.get(response_type, ['']))
         if not response:
             warn('No response for intent %s' % intent)
 
         prompt = ''
-        if response_type in [ResponseType.ACTIVE, ResponseType.RESUMED] and self.get_intent_slots(intent):
+        if response_type in [ResponseType.Active, ResponseType.Resumed] and self.get_intent_slots(intent):
             remaining_questions = self.fill_intent_slots_with_entities(tx, intent, entities)
             if not remaining_questions:
                 return # The intent was satisfied by data in collected entities
@@ -1105,7 +978,7 @@ class Conversation(JSONMixin, SaveMixin):
                 # XXX: Can this be made unnecessary when processing expected_intents?
                 for intent in metadata['INTENT_METADATA'].keys():
                     if intent not in expected_intents:
-                        expected_intents[intent] = Actions.NONE
+                        expected_intents[intent] = Actions.NoAction
 
             if action:
                 self.do_action(tx, action, skip_common_messages=True if message else False)
@@ -1134,12 +1007,12 @@ class Conversation(JSONMixin, SaveMixin):
                 self.prepend_active_intent(intent)
                 tx.prepend_new_intent(intent)
 
-                if intent.name == CommonIntents.CANCEL:
+                if intent.name == CommonIntents.Cancel:
                     dbg('Cancel Intent', color='white')
                     self.add_common_response_message(tx, self.metadata, 'intent_canceled')
                     return
 
-                if intent.name == CommonIntents.REPEAT:
+                if intent.name == CommonIntents.Repeat:
                     dbg('Repeat Intent', color='white')
                     if last_tx:
                         self.repeat_transaction(tx, last_tx, reason='user request')
@@ -1147,7 +1020,7 @@ class Conversation(JSONMixin, SaveMixin):
                         self.add_common_response_message(tx, self.metadata, 'fallback')
                     return
 
-                if intent.name == CommonIntents.HELP:
+                if intent.name == CommonIntents.Help:
                     dbg('Help Intent', color='white')
                     self.add_common_response_message(tx, self.metadata, 'help')
                     return
@@ -1209,13 +1082,13 @@ class Conversation(JSONMixin, SaveMixin):
             if i == 0:
                 self.active_intent = intent
                 tx.active_intent = intent
-                response_type = ResponseType.ACTIVE
+                response_type = ResponseType.Active
                 if tx.completed_intent and (intent not in tx.new_intents):
                     # The user completed an intent with their most recent response
                     # but they have already queued up other intents from previous transactions
-                    response_type = ResponseType.RESUMED
+                    response_type = ResponseType.Resumed
             else:
-                response_type = Response.DEFERRED
+                response_type = ResponseType.Deferred
 
             dbg('Handling %s intent: %s' % (response_type, intent.name), color='white')
             self.add_new_intent_message(tx, intent, response_type=response_type, entities=valid_entities)
