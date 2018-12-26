@@ -1,6 +1,8 @@
 cachetools
 flask
 flask-sqlalchemy
+marshmallow>=3.0.0rc1
+python-dateutil
 requests
 usaddress
 mysql-python

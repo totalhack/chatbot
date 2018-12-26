@@ -1,0 +1,65 @@
+{
+    "COMMON_MESSAGES": {
+        "intents_complete": {
+            "prompts": [
+                "We are all set. Need anything else?"
+            ],
+            "intent_actions": {"ConfirmYes": "NoAction",
+                               "ConfirmNo": "EndConversation"}
+        }
+    },
+
+    "ENTITY_HANDLERS": {
+        "query": "QueryEntityHandler"
+    },
+
+    "INTENT_METADATA": {
+        "IntentXYZ": {
+            "responses": {
+                "Active": [
+                    "Lets do XYZ now.",
+                    "I will start with XYZ now."
+                ],
+                "Deferred": [
+                    "We will get back to your XYZ later."
+                ],
+                "Resumed": [
+                    "Lets get back to your XYZ now."
+                ]
+            },
+
+            "slots": {
+                "zipcode": {"prompts": ["Can I have your zipcode?"],
+                            "follow_up": {"prompts": ["I heard {zipcode}. Is that correct?"],
+                                          "intent_actions": {"ConfirmYes": "NoAction",
+                                                             "ConfirmNo": "RepeatSlot"}},
+                            "entity_handler": "EntityHandler"},
+                "email": {"prompts": ["Can I have your email?"]}
+            },
+            
+            "fulfillment": {
+                "url": "http://127.0.0.1:9000//fulfillment"
+            }
+        }
+    },
+    
+    "TESTS": {
+        "IntentXYZ": [
+            ["Hi", "Welcome"],
+            ["I would like XYZ", "IntentXYZ"],
+            ["My zip is 12345"],
+            ["Yes"],
+            ["My Email is test@test.com", null, "intents_complete"],
+            ["No I am all set",  null, "goodbye"]
+        ],
+        
+        "TriggerIntent": [
+            [{"type": "intent", "value": "IntentXYZ", "context": {"zipcode": "90210"}}, "IntentXYZ"]
+        ],
+        
+        "Repeat": [
+            ["Hi", "Welcome"],
+            ["Can you repeat that?", "Repeat"]
+        ]        
+    }
+}

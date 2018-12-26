@@ -7,7 +7,7 @@ class CommonIntents(object):
     Repeat = 'Repeat'
     Welcome = 'Welcome'
 
-class ResponseType(object):
+class ResponseTypes(object):
     Active = 'Active'
     Deferred = 'Deferred'
     Resumed = 'Resumed'

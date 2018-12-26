@@ -4,6 +4,8 @@ import glob
 import json
 import os
 
+from marshmallow import Schema, fields, ValidationError
+
 from chatbot.core import *
 from chatbot.utils import *
 
@@ -77,7 +79,7 @@ INTENT_METADATA = {
 
     CommonIntents.Welcome: {
         'responses': {
-            ResponseType.Active: [
+            ResponseTypes.Active: [
                 'Hi, how are you?',
             ],
         },
@@ -110,13 +112,14 @@ def load_bot_metadata(app_config, load_tests=False):
 def load_bot_metadata_from_directory(app_config, load_tests=False):
     directory = app_config['BOT_METADATA_DIRECTORY'].rstrip('/')
     files = glob.glob("%s/*.json" % directory)
+    schema = BotMetadataSchema()
 
     count = 0
     for filename in files:
         f = open(filename)
         raw = f.read()
         f.close()
-        bot_metadata = json.loads(raw, object_pairs_hook=OrderedDict)
+        bot_metadata = schema.loads(raw, object_pairs_hook=OrderedDict)
         bot_name = os.path.basename(filename).split('.json')[0]
 
         bot_intent_metadata = copy.deepcopy(INTENT_METADATA)
@@ -136,3 +139,68 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
         count += 1
 
     print 'Loaded %d bot configs' % count
+
+#-------- Schema Validation
+
+def is_valid_response_type(val):
+    types = get_class_vars(ResponseTypes)
+    if val in types:
+        return True
+    raise ValidationError('Invalid response type: %s' % val)
+
+def is_valid_action(val):
+    actions = get_class_vars(Actions)
+    if val in actions:
+        return True
+    raise ValidationError('Invalid action: %s' % val)
+
+class MessageSchema(Schema):
+    prompts = fields.List(fields.Str(), required=True)
+    entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
+    # TODO: validate it is a valid intent
+    intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
+    action = fields.Str(validate=is_valid_action)
+
+class MessageField(fields.Field):
+    def _validate(self, value):
+        if type(value) == list:
+            if not all([type(x) in (str, unicode) for x in value]):
+                raise ValidationError('Invalid Message format: %s' % value)
+        elif isinstance(value, dict):
+            schema = MessageSchema()
+            result = schema.load(value)
+        else:
+            raise ValidationError('Invalid Message format: %s' % value)
+        super(MessageField, self)._validate(value)
+
+class SlotFollowUpSchema(Schema):
+    prompts = fields.List(fields.Str(), required=True)
+    entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
+    # TODO: validate it is a valid intent
+    intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
+    action = fields.Str(validate=is_valid_action)
+
+class IntentSlotSchema(Schema):
+    prompts = fields.List(fields.Str())
+    follow_up = fields.Nested(SlotFollowUpSchema)
+    entity_handler = fields.Str()
+
+class IntentFulfillmentSchema(Schema):
+    url = fields.Url(required=True)
+
+class IntentMetadataSchema(Schema):
+    responses = fields.Dict(keys=fields.Str(validate=is_valid_response_type), values=fields.List(fields.Str()))
+    # XXX This needs to preserve order!
+    slots = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentSlotSchema))
+    fulfillment = fields.Nested(IntentFulfillmentSchema)
+    repeatable = fields.Boolean()
+    preemptive = fields.Boolean()
+    is_answer = fields.Boolean()
+    is_greeting = fields.Boolean()
+
+class BotMetadataSchema(Schema):
+    COMMON_MESSAGES =  fields.Dict(keys=fields.Str(), values=MessageField(), required=True)
+    ENTITY_HANDLERS = fields.Dict(keys=fields.Str(), values=fields.Str())
+    INTENT_METADATA = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentMetadataSchema), required=True)
+    # TODO: validate the list items
+    TESTS = fields.Dict(keys=fields.Str(), values=fields.List(fields.List(fields.Field(allow_none=True))))

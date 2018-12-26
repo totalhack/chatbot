@@ -12,6 +12,9 @@ def st():
     import pdb
     pdb.set_trace()
 
+def get_class_vars(cls):
+    return [i for i in dir(cls) if (not callable(i)) and (not i.startswith('_'))]
+
 # https://stackoverflow.com/questions/7204805/dictionaries-of-dictionaries-merge
 def dictmerge(a, b, path=None, overwrite=False):
     if path is None: path = []

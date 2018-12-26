@@ -191,7 +191,7 @@ class Intent(PrintMixin, JSONMixin):
         self.responses = {}
         if responses:
             for response_type, response_texts in responses.items():
-                assert response_type in (ResponseType.Active, ResponseType.Resumed, ResponseType.Deferred), 'Invalid response type: %s' % response_type
+                assert response_type in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred), 'Invalid response type: %s' % response_type
                 assert type(response_texts) in (tuple, list)
                 self.responses[response_type] = response_texts
 
@@ -930,13 +930,13 @@ class Conversation(JSONMixin, SaveMixin):
     def add_new_intent_message(self, tx, intent, response_type=None, entities=None):
         '''Gets the message(s) at the start of a new intent'''
         if not response_type:
-            response_type = ResponseType.Active
+            response_type = ResponseTypes.Active
         response = random.choice(intent.responses.get(response_type, ['']))
         if not response:
             warn('No response for intent %s' % intent)
 
         prompt = ''
-        if response_type in [ResponseType.Active, ResponseType.Resumed] and self.get_intent_slots(intent):
+        if response_type in [ResponseTypes.Active, ResponseTypes.Resumed] and self.get_intent_slots(intent):
             remaining_questions = self.fill_intent_slots_with_entities(tx, intent, entities)
             if not remaining_questions:
                 return # The intent was satisfied by data in collected entities
@@ -1082,13 +1082,13 @@ class Conversation(JSONMixin, SaveMixin):
             if i == 0:
                 self.active_intent = intent
                 tx.active_intent = intent
-                response_type = ResponseType.Active
+                response_type = ResponseTypes.Active
                 if tx.completed_intent and (intent not in tx.new_intents):
                     # The user completed an intent with their most recent response
                     # but they have already queued up other intents from previous transactions
-                    response_type = ResponseType.Resumed
+                    response_type = ResponseTypes.Resumed
             else:
-                response_type = ResponseType.Deferred
+                response_type = ResponseTypes.Deferred
 
             dbg('Handling %s intent: %s' % (response_type, intent.name), color='white')
             self.add_new_intent_message(tx, intent, response_type=response_type, entities=valid_entities)
