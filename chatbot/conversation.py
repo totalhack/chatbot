@@ -969,7 +969,7 @@ class Conversation(JSONMixin, SaveMixin):
         elif type(message_info) in (list, tuple):
             message = random.choice(message_info)
         else:
-            message = random.choice(message_info['prompts'])
+            message = random.choice(message_info.get('prompts', [None]))
             expected_entities = message_info.get('entity_actions', None)
             expected_intents = message_info.get('intent_actions', None)
             action = message_info.get('action', None)

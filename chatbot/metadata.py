@@ -119,7 +119,14 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
         f = open(filename)
         raw = f.read()
         f.close()
-        bot_metadata = schema.loads(raw, object_pairs_hook=OrderedDict)
+
+        try:
+            bot_metadata = schema.loads(raw, object_pairs_hook=OrderedDict)
+        except ValidationError, e:
+            error('Metadata Validation Error')
+            print json.dumps(e.message, indent=2)
+            raise
+
         bot_name = os.path.basename(filename).split('.json')[0]
 
         bot_intent_metadata = copy.deepcopy(INTENT_METADATA)
@@ -155,7 +162,7 @@ def is_valid_action(val):
     raise ValidationError('Invalid action: %s' % val)
 
 class MessageSchema(Schema):
-    prompts = fields.List(fields.Str(), required=True)
+    prompts = fields.List(fields.Str())
     entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
     # TODO: validate it is a valid intent
     intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
