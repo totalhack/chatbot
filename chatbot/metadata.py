@@ -121,7 +121,8 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
         f.close()
 
         try:
-            bot_metadata = schema.loads(raw, object_pairs_hook=OrderedDict)
+            bot_metadata = schema.loads(raw) # This does the schema check, but has a bug in object_pairs_hook
+            bot_metadata = json.loads(raw, object_pairs_hook=OrderedDict)
         except ValidationError, e:
             error('Metadata Validation Error')
             print json.dumps(e.message, indent=2)
