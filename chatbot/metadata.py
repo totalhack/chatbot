@@ -3,6 +3,7 @@ import copy
 import glob
 import json
 import os
+from urlparse import urlparse
 
 from marshmallow import Schema, fields, ValidationError
 
@@ -108,6 +109,17 @@ def load_bot_metadata(app_config, load_tests=False):
         load_bot_metadata_from_directory(app_config, load_tests=load_tests)
     else:
         assert False, 'Must specify BOT_METADATA_DIRECTORY in main config'
+
+    if app_config['DEBUG'] and app_config.get('TEST_BASE_URL', None):
+        print 'Overriding fulfillment base URLs with TEST_BASE_URL: %s' % app_config['TEST_BASE_URL']
+        for bot, bot_metadata in BOT_METADATA.items():
+            for intent_name, intent_metadata in bot_metadata.get('INTENT_METADATA', {}).items():
+                if intent_metadata.get('fulfillment', {}).get('url', None):
+                    parsed = urlparse(intent_metadata['fulfillment']['url'])
+                    url = app_config['TEST_BASE_URL'] + parsed.path
+                    if parsed.query:
+                        url = url + '?' + parsed.query
+                    intent_metadata['fulfillment']['url'] = url
 
 def load_bot_metadata_from_directory(app_config, load_tests=False):
     directory = app_config['BOT_METADATA_DIRECTORY'].rstrip('/')
