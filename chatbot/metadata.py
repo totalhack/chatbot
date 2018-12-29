@@ -13,12 +13,17 @@ from chatbot.utils import *
 BOT_METADATA = {}
 
 COMMON_MESSAGES = {
+    'greeting': [
+        "Hi",
+        "Hello, and welcome to A B C"
+    ],
+
     'fallback': [
         "Sorry, I didn't get that",
     ],
 
     'help': [
-        "Stil need to add a help message",
+        "Still need to add a help message",
     ],
 
     'intents_complete': {

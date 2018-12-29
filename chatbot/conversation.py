@@ -542,8 +542,14 @@ class Transaction(JSONMixin, SaveMixin):
         self.canceled_intents.append(intent)
 
     def add_response_message(self, message_name, message, expected_entities=None, expected_intents=None, expected_text=None):
+        if message:
+            message = message.strip()
+            if not (message.endswith('.') or message.endswith('?')):
+                message = message + '.'
+
         self.response_messages[message_name] = message
         dbg('Adding response message: %s: %s' % (message_name, message), color='blue')
+
         if expected_entities or expected_intents or expected_text:
             assert not self.requires_answer(), 'A transaction can only require a single answer'
 
@@ -988,6 +994,7 @@ class Conversation(JSONMixin, SaveMixin):
 
     def create_response_message(self, tx, valid_intents, valid_entities):
         last_tx = self.get_last_transaction()
+        greeted = False
 
         # Analyze new intents
         for i, intent in enumerate(valid_intents):
@@ -1026,8 +1033,14 @@ class Conversation(JSONMixin, SaveMixin):
                     self.add_common_response_message(tx, self.metadata, 'help')
                     return
             else:
+                if intent.is_greeting:
+                    greeted = True
                 self.add_active_intent(intent)
                 tx.add_new_intent(intent)
+
+        if (not greeted) and (not last_tx):
+            dbg('Adding greeting on first transaction', color='white')
+            self.add_common_response_message(tx, self.metadata, 'greeting')
 
         # Handle transactional questions that require answers
         # TODO: combine with slot logic?
