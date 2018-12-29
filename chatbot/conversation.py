@@ -373,7 +373,7 @@ class FulfillmentResponse(PrintMixin, JSONMixin):
 class IntentResponse(PrintMixin, JSONMixin):
     repr_attrs = ['query', 'intents', 'entities']
 
-    def __init__(self, query, intents, entities=[]):
+    def __init__(self, query, intents, entities=None):
         self.query = query
         assert intents
         self.intents = sorted(intents, key=lambda x: x.score, reverse=True)
@@ -385,6 +385,10 @@ class IntentResponse(PrintMixin, JSONMixin):
 
     def filter_entities(self, score):
         return [x for x in self.entities if (x.score is None or x.score > score)]
+
+    def add_entities_from_dict(self, entity_dict):
+        for k,v in entity_dict.items():
+            self.entities.append(Entity(name=k, type=k, value=v))
 
     def get_valid(self, intent_threshold=INTENT_FILTER_THRESHOLD, entity_threshold=ENTITY_FILTER_THRESHOLD):
         valid_intents = self.filter_intents(intent_threshold)
@@ -399,16 +403,9 @@ def get_triggered_intent(metadata, intent_name):
     return intent
 
 class TriggeredIntentResponse(IntentResponse):
-    def __init__(self, metadata, intent_name, context=None):
+    def __init__(self, metadata, intent_name):
         intents = [get_triggered_intent(metadata, intent_name)]
-
-        entities = []
-        if context:
-            assert isinstance(context, dict), 'Invalid context: %s' % context
-            for k,v in context.items():
-                entities.append(Entity(name=k, type=k, value=v))
-
-        super(TriggeredIntentResponse, self).__init__(None, intents, entities=entities)
+        super(TriggeredIntentResponse, self).__init__(None, intents)
 
 class LUISResponse(IntentResponse):
     ENTITY_TRANSLATIONS = {
@@ -702,7 +699,7 @@ class Conversation(JSONMixin, SaveMixin):
         last_tx = self.get_last_transaction()
 
         if input.type == 'intent':
-            intent_response = TriggeredIntentResponse(self.metadata, input.value, input.context)
+            intent_response = TriggeredIntentResponse(self.metadata, input.value)
         elif input.type == 'text':
             if self.nlu == 'luis':
                 intent_response = LUISResponse(self.metadata, luis(input.value), last_tx)
@@ -710,6 +707,10 @@ class Conversation(JSONMixin, SaveMixin):
                 assert False, 'nlu not supported: %s' % self.nlu
         else:
             assert False, 'Invalid input: %s' % input
+
+        if input.context:
+            dbg('Adding context to intent_response: %s' % input.context, color='blue')
+            intent_response.add_entities_from_dict(input.context)
 
         dbg(vars(intent_response), color='blue')
         tx.intent_response = intent_response
