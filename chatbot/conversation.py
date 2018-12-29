@@ -250,7 +250,7 @@ class Intent(PrintMixin, JSONMixin):
 class Entity(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'type', 'value', 'score']
 
-    def __init__(self, name, type, start_index=None, end_index=None, score=None, value=None):
+    def __init__(self, name, type, start_index=None, end_index=None, score=None, value=None, from_context=False):
         self.name = name
         self.type = type
         self.slot_name = type
@@ -258,6 +258,7 @@ class Entity(PrintMixin, JSONMixin):
         self.end_index = end_index
         self.score = score
         self.value = value
+        self.from_context = from_context
 
 class EntityHandler(JSONMixin):
     def process(self, query, nlu_entities):
@@ -386,9 +387,9 @@ class IntentResponse(PrintMixin, JSONMixin):
     def filter_entities(self, score):
         return [x for x in self.entities if (x.score is None or x.score > score)]
 
-    def add_entities_from_dict(self, entity_dict):
-        for k,v in entity_dict.items():
-            self.entities.append(Entity(name=k, type=k, value=v))
+    def add_entities_from_context(self, context):
+        for k,v in context.items():
+            self.entities.append(Entity(name=k, type=k, value=v, from_context=True))
 
     def get_valid(self, intent_threshold=INTENT_FILTER_THRESHOLD, entity_threshold=ENTITY_FILTER_THRESHOLD):
         valid_intents = self.filter_intents(intent_threshold)
@@ -716,7 +717,7 @@ class Conversation(JSONMixin, SaveMixin):
 
         if input.context:
             dbg('Adding context to intent_response: %s' % input.context, color='blue')
-            intent_response.add_entities_from_dict(input.context)
+            intent_response.add_entities_from_context(input.context)
 
         dbg(vars(intent_response), color='blue')
         tx.intent_response = intent_response
@@ -849,7 +850,7 @@ class Conversation(JSONMixin, SaveMixin):
 
                     filled_slot = self.fill_intent_slot(tx, intent, entity)
                     del remaining_questions[entity.slot_name]
-                    if filled_slot.follow_up:
+                    if filled_slot.follow_up and not entity.from_context:
                         fu = filled_slot.follow_up
                         dbg('Adding follow-up %s' % fu.name, color='cyan')
                         remaining_questions.prepend(fu.name, fu)
