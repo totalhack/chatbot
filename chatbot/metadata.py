@@ -98,6 +98,12 @@ ENTITY_HANDLERS = {
     'street_address': 'AddressEntityHandler',
 }
 
+def is_common_intent(val):
+    types = get_class_vars(CommonIntents)
+    if val in types:
+        return True
+    return False
+
 def is_main_config_file(filename):
     if filename == os.environ['CHATBOT_CONFIG']:
         return True
@@ -126,6 +132,11 @@ def load_bot_metadata(app_config, load_tests=False):
                         url = url + '?' + parsed.query
                     intent_metadata['fulfillment']['url'] = url
 
+def check_bot_intent_metadata(bot_intent_metadata):
+    # Additional checks to enforce supported behavior
+    for intent_name, intent_dict in bot_intent_metadata.items():
+        assert not intent_dict.has_key('preemptive'), 'Preemptive bot intents are not currently supported: %s' % intent_name
+
 def load_bot_metadata_from_directory(app_config, load_tests=False):
     directory = app_config['BOT_METADATA_DIRECTORY'].rstrip('/')
     files = glob.glob("%s/*.json" % directory)
@@ -146,18 +157,23 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
             raise
 
         bot_name = os.path.basename(filename).split('.json')[0]
+        bot_intent_metadata = bot_metadata.get('INTENT_METADATA', {})
+        bot_entity_handlers = bot_metadata.get('ENTITY_HANDLERS', {})
+        bot_common_messages = bot_metadata.get('COMMON_MESSAGES', {})
 
-        bot_intent_metadata = copy.deepcopy(INTENT_METADATA)
-        bot_intent_metadata.update(bot_metadata.get('INTENT_METADATA', {}))
-        bot_entity_handlers = copy.deepcopy(ENTITY_HANDLERS)
-        bot_entity_handlers.update(bot_metadata.get('ENTITY_HANDLERS', {}))
-        bot_common_messages = copy.deepcopy(COMMON_MESSAGES)
-        bot_common_messages.update(bot_metadata.get('COMMON_MESSAGES', {}))
+        check_bot_intent_metadata(bot_intent_metadata)
+
+        intent_metadata = copy.deepcopy(INTENT_METADATA)
+        intent_metadata.update(bot_intent_metadata)
+        entity_handlers = copy.deepcopy(ENTITY_HANDLERS)
+        entity_handlers.update(bot_entity_handlers)
+        common_messages = copy.deepcopy(COMMON_MESSAGES)
+        common_messages.update(bot_common_messages)
 
         BOT_METADATA[bot_name] = dict(
-            INTENT_METADATA=bot_intent_metadata,
-            ENTITY_HANDLERS=bot_entity_handlers,
-            COMMON_MESSAGES=bot_common_messages,
+            INTENT_METADATA=intent_metadata,
+            ENTITY_HANDLERS=entity_handlers,
+            COMMON_MESSAGES=common_messages,
         )
         if load_tests:
             BOT_METADATA[bot_name]['TESTS'] = bot_metadata.get('TESTS', {})

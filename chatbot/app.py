@@ -1,4 +1,3 @@
-from cachetools import TTLCache
 from collections import OrderedDict
 from pprint import pprint
 import json
@@ -9,17 +8,13 @@ import traceback
 
 from chatbot import app
 from chatbot.conversation import *
+from chatbot.core import *
 from chatbot.metadata import *
 from chatbot.utils import *
 
 db.init_app(app)
 load_bot_metadata(app.config)
-
-# TODO: replace with an external cache
-CACHE_SIZE = 1000
-CACHE_TTL = 3600*48
-CONVO_CACHE = TTLCache(CACHE_SIZE, CACHE_TTL)
-warn('Replace conversation cache for production!')
+setup_caching(app.config)
 
 @app.route('/')
 def home():
@@ -36,8 +31,10 @@ def chat():
         dbg('Conversation ID: %s / Bot: %s' % (convo_id, bot), color='green')
         dbg('Input: %s' % input, color='green')
 
+        convo_cache = get_convo_cache(app.config)
+
         if convo_id:
-            convo = CONVO_CACHE.get(convo_id, None)
+            convo = convo_cache.get(convo_id, None)
             if not convo:
                 response = {'status': 'error', 'response': 'No conversation found for ID %s' % convo_id}
                 return jsonr(response)
@@ -58,7 +55,7 @@ def chat():
         convo.save()
         tx.save()
 
-        CONVO_CACHE[convo_id] = convo
+        convo_cache[convo_id] = convo
         response = {'status': 'success',
                     'response': reply,
                     'conversation_id': convo_id,

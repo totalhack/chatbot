@@ -4,6 +4,7 @@ import json
 from json import JSONEncoder
 from pprint import pprint, pformat
 import random
+import string
 import sys
 
 from flask import Response, current_app
@@ -14,6 +15,14 @@ def st():
 
 def get_class_vars(cls):
     return [i for i in dir(cls) if (not callable(i)) and (not i.startswith('_'))]
+
+def get_string_format_args(s):
+    return [tup[1] for tup in string.Formatter().parse(s) if tup[1] is not None]
+
+def string_has_format_args(s):
+    if get_string_format_args(s):
+        return True
+    return False
 
 # https://stackoverflow.com/questions/7204805/dictionaries-of-dictionaries-merge
 def dictmerge(a, b, path=None, overwrite=False):
@@ -59,8 +68,10 @@ JSONEncoder.default = _default
 def jsonr(obj):
     return Response(json.dumps(obj), mimetype="application/json")
 
-class FontColors:
+class FontSpecialChars:
     ENDC = '\033[0m'
+
+class FontColors:
     BLACK = '\033[30m'
     RED = '\033[31m'
     GREEN = '\033[32m'
@@ -69,27 +80,46 @@ class FontColors:
     MAGENTA = '\033[35m'
     CYAN = '\033[36m'
     WHITE = '\033[37m'
+
+COLOR_OPTIONS = [x for x in get_class_vars(FontColors) if x not in ['BLACK', 'WHITE']]
+
+class FontEffects:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
     INVERTED = '\033[7m'
 
-def log(msg, label='parent', indent=0, color=None, format_func=pformat):
+def log(msg, label='parent', indent=0, color=None, autocolor=False, format_func=pformat):
     if type(msg) not in (str, unicode):
         msg = pformat(msg)
-    if indent is not None and int(indent): sg = msg + (' ' * int(indent))
+
+    if indent is not None and int(indent):
+        sg = msg + (' ' * int(indent))
+
     if label:
         if label == 'parent':
             label = sys._getframe().f_back.f_code.co_name
         msg = label.strip() + ':' + msg
-    if color: msg = getattr(FontColors, color.upper()) + msg + FontColors.ENDC
+
+    if (not color) and autocolor:
+        assert label, 'No label provided, can not use autocolor'
+        color_index = ord(label[0]) % len(COLOR_OPTIONS)
+        color = COLOR_OPTIONS[color_index]
+
+    if color:
+        msg = getattr(FontColors, color.upper()) + msg + FontSpecialChars.ENDC
+
     print msg
 
-def dbg(msg, label='parent', **kwargs):
-    if not current_app.config['DEBUG']:
+def dbg(msg, label='parent', app_config=None, **kwargs):
+    if app_config:
+        if not app_config['DEBUG']:
+            return
+    elif not current_app.config['DEBUG']:
         return
+
     if label == 'parent':
         label = sys._getframe().f_back.f_code.co_name
-    log(msg, label=label, **kwargs)
+    log(msg, label=label, autocolor=True, **kwargs)
 
 def warn(msg, label='WARNING'):
     log(msg, label=label, color='yellow')

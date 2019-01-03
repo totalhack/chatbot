@@ -1,4 +1,5 @@
 cachetools
+diskcache
 flask
 flask-sqlalchemy
 marshmallow>=3.0.0rc1
