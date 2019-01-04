@@ -97,7 +97,7 @@ INTENT_METADATA = {
         'is_answer': False
     },
 
-    CommonIntents.Welcome: {
+    CommonIntents.Greeting: {
         'responses': {
             ResponseTypes.Active: [
                 'Hi, how are you?',

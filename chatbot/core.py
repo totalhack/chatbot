@@ -1,5 +1,5 @@
 from cachetools import LRUCache, TTLCache
-from diskcache import Cache as DiskCache
+from diskcache import Cache
 
 from chatbot.utils import *
 
@@ -18,7 +18,7 @@ class CommonIntents(object):
     Help = 'Help'
     NoIntent = 'None' # TODO: for NLUs to convert intent names to canon values
     Repeat = 'Repeat'
-    Welcome = 'Welcome'
+    Greeting = 'Greeting'
 
 class ResponseTypes(object):
     Active = 'Active'
@@ -39,10 +39,10 @@ class VariableActions(object):
     RemoveIntent = 'RemoveIntent'
     RepeatSlotAndRemoveIntent = 'RepeatSlotAndRemoveIntent'
 
-class NLUDiskCache(object):
+class DiskCache(object):
     def __init__(self, cache_dir, ttl=None):
         self.ttl = ttl
-        self.cache = DiskCache(cache_dir, eviction_policy='least-recently-used')
+        self.cache = Cache(cache_dir, eviction_policy='least-recently-used')
 
     def __getitem__(self, key):
         return self.cache[key]
@@ -55,6 +55,9 @@ class NLUDiskCache(object):
 
     def set(self, key, value):
         return self.cache.set(key, value, expire=self.ttl)
+
+    def clear(self):
+        self.cache.clear()
 
 def get_nlu_cache(app_config):
     # TODO: in production, replace with something multi-process friendly
@@ -69,7 +72,7 @@ def get_nlu_cache(app_config):
         dbg('Initializing DiskCache for NLU', app_config=app_config)
         cache_dir = app_config.get('NLU_DISK_CACHE_DIR', '/tmp')
         ttl = app_config.get('NLU_DISK_CACHE_TTL', DEFAULT_NLU_DISK_CACHE_TTL)
-        NLU_CACHE = NLUDiskCache(cache_dir, ttl=ttl)
+        NLU_CACHE = DiskCache(cache_dir, ttl=ttl)
         return NLU_CACHE
 
     dbg('Initializing LRUCache for NLU', app_config=app_config)
