@@ -119,5 +119,9 @@ def fulfillment_with_error_status():
     return jsonr(response)
 
 if __name__ == "__main__":
+    if app.config.get('DEBUG', False) and app.config.get('PROFILE', False):
+        from werkzeug.contrib.profiler import ProfilerMiddleware
+        warn('Using Profiler')
+        f = open('/tmp/chatbot_profiler.log', 'w')
+        app.wsgi_app = ProfilerMiddleware(app.wsgi_app, stream=f, restrictions=[20])
     app.run(port=9000)
-
