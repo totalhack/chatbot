@@ -16,6 +16,7 @@ from chatbot.utils import *
 INTENT_FILTER_THRESHOLD = 0.50
 ENTITY_FILTER_THRESHOLD = 0.50
 MAX_QUESTION_ATTEMPTS = 2
+MAX_CONSECUTIVE_FALLBACK_ATTEMPTS = 2
 
 DEFAULT_FOLLOW_UP_ACTIONS = {
     CommonIntents.ConfirmYes: Actions.NoAction,
@@ -688,6 +689,7 @@ class Conversation(JSONMixin, SaveMixin):
         self.active_intent = None
         self.question_attempts = OrderedDictPlus()
         self.completed = False
+        self.consecutive_fallback_count = 0
 
     def save(self):
         convo = Conversations(id=self.id, data=json.dumps(self.get_save_data()))
@@ -1145,7 +1147,10 @@ class Conversation(JSONMixin, SaveMixin):
                     if last_tx:
                         self.repeat_transaction(tx, last_tx, reason='user request')
                     else:
-                        self.add_common_response_message(tx, self.metadata, 'fallback')
+                        if self.consecutive_fallback_count >= MAX_CONSECUTIVE_FALLBACK_ATTEMPTS:
+                            self.add_common_response_message(tx, self.metadata, 'fallback_exhausted')
+                        else:
+                            self.add_common_response_message(tx, self.metadata, 'fallback')
                     return
 
                 if intent.name == CommonIntents.Help:
@@ -1162,6 +1167,10 @@ class Conversation(JSONMixin, SaveMixin):
         if (not greeted) and (not last_tx):
             dbg('Adding greeting on first transaction')
             self.add_common_response_message(tx, self.metadata, 'greeting')
+            if not valid_intents:
+                # It's the first message and we didn't recognize the intent of the user
+                self.add_common_response_message(tx, self.metadata, 'initial_prompt')
+                return
 
         # Handle questions that require answers
         if last_tx and last_tx.requires_answer():
@@ -1228,7 +1237,10 @@ class Conversation(JSONMixin, SaveMixin):
             if tx.completed_intent or (self.completed_intents and not self.active_intents):
                 self.add_common_response_message(tx, self.metadata, 'intents_complete')
             else:
-                self.add_common_response_message(tx, self.metadata, 'fallback')
+                if self.consecutive_fallback_count >= MAX_CONSECUTIVE_FALLBACK_ATTEMPTS:
+                    self.add_common_response_message(tx, self.metadata, 'fallback_exhausted')
+                else:
+                    self.add_common_response_message(tx, self.metadata, 'fallback')
 
     def process_intent_response(self, tx, intent_response):
         valid_intents, valid_entities = intent_response.get_valid()
@@ -1255,5 +1267,11 @@ class Conversation(JSONMixin, SaveMixin):
         if tx.response_messages:
             context = self.get_message_context()
             response_message = tx.format_response_message(context=context)
+
+        if 'fallback' in tx.response_messages:
+            self.consecutive_fallback_count += 1
+            dbg('Consecutive fallback messages: %s' % self.consecutive_fallback_count)
+        else:
+            self.consecutive_fallback_count = 0
 
         return response_message

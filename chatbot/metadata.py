@@ -17,6 +17,11 @@ COMMON_MESSAGES = {
         "Sorry, I didn't get that",
     ],
 
+    'fallback_exhausted': {
+        'prompts': ["I'm sorry, I'm unable to help you at this time"],
+        'action': Actions.EndConversation,
+    },
+
     'goodbye': [
         "Thanks. Have a nice day!"
     ],
@@ -28,6 +33,10 @@ COMMON_MESSAGES = {
 
     'help': [
         "Still need to add a help message",
+    ],
+
+    'initial_prompt': [
+        "How can I help you today?"
     ],
 
     'intents_complete': {
