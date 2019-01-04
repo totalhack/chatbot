@@ -13,13 +13,17 @@ from chatbot.utils import *
 BOT_METADATA = {}
 
 COMMON_MESSAGES = {
+    'fallback': [
+        "Sorry, I didn't get that",
+    ],
+
+    'goodbye': [
+        "Thanks. Have a nice day!"
+    ],
+
     'greeting': [
         "Hi",
         "Hello, and welcome to A B C"
-    ],
-
-    'fallback': [
-        "Sorry, I didn't get that",
     ],
 
     'help': [
@@ -47,9 +51,10 @@ COMMON_MESSAGES = {
                            CommonIntents.ConfirmNo: Actions.NoAction}
     },
 
-    'goodbye': [
-        "Thanks. Have a nice day!"
-    ]
+    'unanswered': [
+        "Sorry, I didn't get that",
+        "Sorry, I couldn't understand your answer"
+    ],
 }
 
 INTENT_METADATA = {
@@ -225,6 +230,7 @@ class IntentSlotSchema(Schema):
     prompts = fields.List(fields.Str())
     follow_up = fields.Nested(SlotFollowUpSchema)
     entity_handler = fields.Str()
+    autofill = fields.Boolean()
 
 class IntentFulfillmentSchema(Schema):
     url = fields.Url(required=True)

@@ -124,16 +124,22 @@ class Slot(Question):
         entity_handler_name = slot_info.get('entity_handler', None)
         if (not entity_handler_name) and slot_name in metadata['ENTITY_HANDLERS']:
             entity_handler_name = metadata['ENTITY_HANDLERS'][slot_name]
-        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up)
 
-    def __init__(self, name, prompts, entity_handler_name=None, follow_up=None):
-        super(Slot, self).__init__(name, prompts)
+        autofill = slot_info.get('autofill', None)
+
+        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up, autofill=autofill)
+
+    def __init__(self, name, prompts, entity_handler_name=None, follow_up=None, autofill=None):
+        # TODO: should slot be filled by an action? Allow overriding intent/entity actions for slots?
+        entity_actions = {name: Actions.NoAction}
+        super(Slot, self).__init__(name, prompts, entity_actions=entity_actions)
         if entity_handler_name:
             assert type(entity_handler_name) in (str, unicode), 'Invalid entity handler: %s' % entity_handler_name
         self.entity_handler_name = entity_handler_name
         self.follow_up = follow_up
         if follow_up:
             assert type(follow_up) == FollowUp
+        self.autofill = autofill
         self.value = None
 
     def get_follow_up_prompt(self):
@@ -148,10 +154,14 @@ class Slot(Question):
 
     def copy(self):
         new_slot = Slot(self.name,
-                        self.prompts,
+                        copy.deepcopy(self.prompts),
                         entity_handler_name=self.entity_handler_name,
-                        follow_up=self.follow_up)
-        new_slot.value = self.value
+                        follow_up=copy.deepcopy(self.follow_up),
+                        autofill=self.autofill)
+        if isinstance(self.value, Entity):
+            new_slot.value = self.value.copy()
+        else:
+            new_slot.value = copy.deepcopy(self.value)
         return new_slot
 
 class FollowUp(Question):
@@ -230,7 +240,7 @@ class Intent(PrintMixin, JSONMixin):
             resp = requests.post(url, json=fulfillment_data)
             status_code = resp.status_code
             content = resp.content
-            resp.raise_for_status() # TODO: how should a failure here be handled on the front end?
+            resp.raise_for_status()
             return FulfillmentResponse('%s_fulfillment' % self.name, **resp.json())
         except Exception, e:
             content = str(e)
@@ -256,6 +266,16 @@ class Entity(PrintMixin, JSONMixin):
         self.score = score
         self.value = value
         self.from_context = from_context
+
+    def copy(self):
+        new_entity = Entity(self.name,
+                            self.type,
+                            start_index=self.start_index,
+                            end_index=self.end_index,
+                            score=self.score,
+                            value=copy.deepcopy(self.value),
+                            from_context=self.from_context)
+        return new_entity
 
 class EntityHandler(JSONMixin):
     def process(self, query, nlu_entities):
@@ -294,10 +314,10 @@ class AddressEntityHandler(EntityHandler):
         address_entities = []
         address_parts = []
         address_part_map = {
-            # TODO: what if there is more to the address, such as unit number?
             'AddressNumber': 'street_number',
             'StreetName': 'street_name',
             'StreetNamePostType': 'street_type',
+            'OccupancyIdentifier': 'unit_number',
             'PlaceName': 'city',
             'StateName': 'state',
         }
@@ -501,7 +521,7 @@ class Transaction(JSONMixin, SaveMixin):
         self.id = str(uuid.uuid4())
         self.input = None
         self.intent_response = None
-        self.response_messages = OrderedDict()
+        self.response_messages = OrderedDictPlus()
         self.response_message_text = None
         self.slots_filled = MessageGroup()
         self.question = None
@@ -538,7 +558,7 @@ class Transaction(JSONMixin, SaveMixin):
         dbg('Canceling intent: %s' % intent.name)
         self.canceled_intents.append(intent)
 
-    def add_response_message(self, message_name, message, context=None, expected_entities=None, expected_intents=None, expected_text=None):
+    def add_response_message(self, message_name, message, context=None, expected_entities=None, expected_intents=None, expected_text=None, prepend=False):
         if message:
             message = message.strip()
             if not (message.endswith('.') or message.endswith('?')):
@@ -550,8 +570,12 @@ class Transaction(JSONMixin, SaveMixin):
                 for format_arg in format_args:
                     assert format_arg in context, 'Message arg "%s" can not be satisifed by context: %s' % (format_arg, context)
 
-        self.response_messages[message_name] = message
-        dbg('Adding response message: %s: %s' % (message_name, message))
+        if prepend:
+            self.response_messages.prepend(message_name, message)
+            dbg('Prepending response message: %s: %s' % (message_name, message))
+        else:
+            self.response_messages[message_name] = message
+            dbg('Adding response message: %s: %s' % (message_name, message))
 
         if expected_entities or expected_intents or expected_text:
             assert not self.requires_answer(), 'A transaction can only require a single answer'
@@ -566,9 +590,10 @@ class Transaction(JSONMixin, SaveMixin):
             assert isinstance(expected_text, dict)
             self.expected_text = expected_text
 
-    def add_response_message_object(self, msg, context=None):
+    def add_response_message_object(self, msg, context=None, prepend=False):
         self.add_response_message(msg.name, msg.get_prompt(),
                                   context=context,
+                                  prepend=prepend,
                                   expected_entities=getattr(msg, 'entity_actions', None),
                                   expected_intents=getattr(msg, 'intent_actions', None))
 
@@ -585,11 +610,19 @@ class Transaction(JSONMixin, SaveMixin):
             self.response_message_text = response_message
         return response_message
 
+    def clear_response_messages(self):
+        self.response_messages = OrderedDictPlus()
+        self.expected_entities = None
+        self.expected_intents = None
+        self.expected_text = None
+
     def copy_data_from_transaction(self, other_tx):
         for k,v in vars(other_tx).items():
             if k in self.dont_copy_attrs:
                 continue
             if isinstance(v, dict):
+                v = copy.deepcopy(v)
+            elif hasattr(v, 'copy'):
                 v = v.copy()
             setattr(self, k, v)
 
@@ -783,12 +816,19 @@ class Conversation(JSONMixin, SaveMixin):
             return True
         return False
 
-    def repeat_transaction(self, tx, last_tx, reason=None):
+    def repeat_transaction(self, tx, last_tx, reason=None, question_only=False):
         if last_tx.question:
             assert self.add_question_attempt(self.active_intent, last_tx.question), 'Unable to repeat transaction. Question exhausted: %s' % last_tx.question
         tx.copy_data_from_transaction(last_tx)
         tx.repeat = True
         tx.repeat_reason = reason
+        if question_only:
+            assert tx.question, 'Last TX does not have a question to repeat'
+            tx.clear_response_messages()
+            prompt = tx.question.get_prompt()
+            self.add_response_message(tx, '%s:%s' % (self.active_intent.name, tx.question.name), prompt,
+                                      expected_entities=tx.question.entity_actions,
+                                      expected_intents=tx.question.intent_actions)
 
     def get_intent_slots(self, intent):
         return self.intents[intent.name].slots
@@ -819,6 +859,7 @@ class Conversation(JSONMixin, SaveMixin):
         dbg('Clearing filled slot %s for intent %s' % (slot.slot_name, intent.name))
 
     def repeat_slot(self):
+        '''This is meant to repeat the last *filled* slot'''
         last_tx = self.get_last_transaction_with_slot(intent=self.active_intent)
         assert last_tx, 'Trying to repeat slot but there is no last transaction with a slot'
         assert last_tx.slots_filled, 'Trying to repeat slot but no slot filled on previous transaction'
@@ -922,13 +963,16 @@ class Conversation(JSONMixin, SaveMixin):
         remaining_slots = intent.get_remaining_intent_slots()
         if remaining_slots:
             for slot_name, slot in remaining_slots.items():
+                if not slot.autofill:
+                    continue
+
                 filled_slots = self.get_filled_slots_by_name(slot_name)
                 if not any(filled_slots.values()):
                     # This slot has no values, so we cant fill anything. Move on.
                     continue
 
                 # This slot has already been filled. Reuse its value.
-                filled_slot = self.fill_intent_slot(tx, intent, filled_slots.values()[0])
+                filled_slot = self.fill_intent_slot(tx, intent, filled_slots.values()[0].copy())
 
             remaining_slots = intent.get_remaining_intent_slots()
             if not remaining_slots:
@@ -1012,19 +1056,22 @@ class Conversation(JSONMixin, SaveMixin):
                 return # The intent was satisfied by data in collected entities
             assert not any([type(x) == FollowUp for x in remaining_questions]), 'FollowUp found while adding message for new intent: %s' % remaining_questions
 
-            # TODO: add this back in but require asking confirmation
-            #remaining_questions = self.fill_intent_slots_with_filled_slots(tx, intent)
-            #if not remaining_questions:
-            #    return # The intent was satisfied by existing slot data
-            #assert not any([type(x) == FollowUp for x in remaining_questions]), 'FollowUp found while adding message for new intent: %s' % remaining_questions
+            remaining_questions = self.fill_intent_slots_with_filled_slots(tx, intent)
+            if not remaining_questions:
+                return # The intent was satisfied by existing slot data
+            assert not any([type(x) == FollowUp for x in remaining_questions]), 'FollowUp found while adding message for new intent: %s' % remaining_questions
 
             # There are slots to prompt for this intent still
             question, prompt = self.get_next_question_and_prompt(tx, remaining_questions)
             if not question:
                 return
 
-        if response: self.add_response_message(tx, '%s:%s' % (intent.name, response_type), response)
-        if prompt: self.add_response_message(tx, '%s:%s' % (intent.name, question.name), prompt)
+        if response:
+            self.add_response_message(tx, '%s:%s' % (intent.name, response_type), response)
+        if prompt:
+            self.add_response_message(tx, '%s:%s' % (intent.name, question.name), prompt,
+                                      expected_entities=question.entity_actions,
+                                      expected_intents=question.intent_actions)
 
     def add_response_message(self, tx, *args, **kwargs):
         kwargs['context'] = kwargs.get('context', self.get_message_context())
@@ -1040,7 +1087,7 @@ class Conversation(JSONMixin, SaveMixin):
     def get_common_message(self, metadata, message_name):
         return metadata['COMMON_MESSAGES'][message_name]
 
-    def add_common_response_message(self, tx, metadata, message_name):
+    def add_common_response_message(self, tx, metadata, message_name, prepend=False):
         message_info = self.get_common_message(metadata, message_name)
         message = None
         expected_entities = None
@@ -1061,7 +1108,7 @@ class Conversation(JSONMixin, SaveMixin):
             if action:
                 self.do_action(tx, action, skip_common_messages=True if message else False)
 
-        self.add_response_message(tx, message_name, message, expected_entities=expected_entities, expected_intents=expected_intents)
+        self.add_response_message(tx, message_name, message, expected_entities=expected_entities, expected_intents=expected_intents, prepend=prepend)
 
     def create_response_message(self, tx, valid_intents, valid_entities):
         last_tx = self.get_last_transaction()
@@ -1116,7 +1163,7 @@ class Conversation(JSONMixin, SaveMixin):
             dbg('Adding greeting on first transaction')
             self.add_common_response_message(tx, self.metadata, 'greeting')
 
-        # Handle transactional questions that require answers
+        # Handle questions that require answers
         if last_tx and last_tx.requires_answer():
             is_answered, action = last_tx.is_answered(valid_entities, valid_intents, tx.input)
             if is_answered:
@@ -1124,9 +1171,9 @@ class Conversation(JSONMixin, SaveMixin):
                 if self.completed or tx.response_messages:
                     return
             else:
-                # TODO: add "i didnt get that" or similar to response
                 if self.transaction_repeatable(last_tx):
-                    self.repeat_transaction(tx, last_tx, reason='last transaction not answered')
+                    self.repeat_transaction(tx, last_tx, reason='last transaction not answered', question_only=True)
+                    self.add_common_response_message(tx, self.metadata, 'unanswered', prepend=True)
                 else:
                     self.abort_intent(tx)
                 return
