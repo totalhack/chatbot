@@ -12,6 +12,11 @@ from chatbot.utils import *
 
 BOT_METADATA = {}
 
+DEFAULT_INTENT_FILTER_THRESHOLD = 0.50
+DEFAULT_ENTITY_FILTER_THRESHOLD = 0.50
+DEFAULT_MAX_QUESTION_ATTEMPTS = 2
+DEFAULT_MAX_CONSECUTIVE_FALLBACK_ATTEMPTS = 2
+
 COMMON_MESSAGES = {
     'fallback': [
         "Sorry, I didn't get that",
@@ -185,6 +190,10 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
         common_messages.update(bot_common_messages)
 
         BOT_METADATA[bot_name] = dict(
+            INTENT_FILTER_THRESHOLD=bot_metadata.get('INTENT_FILTER_THRESHOLD', DEFAULT_INTENT_FILTER_THRESHOLD),
+            ENTITY_FILTER_THRESHOLD=bot_metadata.get('ENTITY_FILTER_THRESHOLD', DEFAULT_ENTITY_FILTER_THRESHOLD),
+            MAX_QUESTION_ATTEMPTS=bot_metadata.get('MAX_QUESTION_ATTEMPTS', DEFAULT_MAX_QUESTION_ATTEMPTS),
+            MAX_CONSECUTIVE_FALLBACK_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_FALLBACK_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_FALLBACK_ATTEMPTS),
             INTENT_METADATA=intent_metadata,
             ENTITY_HANDLERS=entity_handlers,
             COMMON_MESSAGES=common_messages,
@@ -196,6 +205,14 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
     print 'Loaded %d bot configs' % count
 
 #-------- Schema Validation
+
+def is_zero_to_one(val):
+    if val is None:
+        raise ValidationError('Must be a number between 0 and 1: %s' % val)
+    val = float(val)
+    if val >=0 and val <= 1:
+        return True
+    raise ValidationError('Must be a number between 0 and 1: %s' % val)
 
 def is_valid_response_type(val):
     types = get_class_vars(ResponseTypes)
@@ -255,7 +272,11 @@ class IntentMetadataSchema(Schema):
     is_greeting = fields.Boolean()
 
 class BotMetadataSchema(Schema):
-    COMMON_MESSAGES =  fields.Dict(keys=fields.Str(), values=MessageField(), required=True)
+    INTENT_FILTER_THRESHOLD = fields.Float(validate=is_zero_to_one)
+    ENTITY_FILTER_THRESHOLD = fields.Float(validate=is_zero_to_one)
+    MAX_QUESTION_ATTEMPTS = fields.Integer()
+    MAX_CONSECUTIVE_FALLBACK_ATTEMPTS = fields.Integer()
+    COMMON_MESSAGES = fields.Dict(keys=fields.Str(), values=MessageField(), required=True)
     ENTITY_HANDLERS = fields.Dict(keys=fields.Str(), values=fields.Str())
     INTENT_METADATA = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentMetadataSchema), required=True)
     # TODO: validate the list items

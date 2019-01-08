@@ -13,11 +13,6 @@ from chatbot.metadata import *
 from chatbot.model import *
 from chatbot.utils import *
 
-INTENT_FILTER_THRESHOLD = 0.50
-ENTITY_FILTER_THRESHOLD = 0.50
-MAX_QUESTION_ATTEMPTS = 2
-MAX_CONSECUTIVE_FALLBACK_ATTEMPTS = 2
-
 DEFAULT_FOLLOW_UP_ACTIONS = {
     CommonIntents.ConfirmYes: Actions.NoAction,
     CommonIntents.ConfirmNo: Actions.RepeatSlot,
@@ -409,7 +404,8 @@ class IntentResponse(PrintMixin, JSONMixin):
         for k,v in context.items():
             self.entities.append(Entity(name=k, type=k, value=v, from_context=True))
 
-    def get_valid(self, intent_threshold=INTENT_FILTER_THRESHOLD, entity_threshold=ENTITY_FILTER_THRESHOLD):
+    def get_valid(self, intent_threshold=0, entity_threshold=0):
+        st()
         valid_intents = self.filter_intents(intent_threshold)
         valid_entities = self.filter_entities(entity_threshold)
         return valid_intents, valid_entities
@@ -814,7 +810,7 @@ class Conversation(JSONMixin, SaveMixin):
         if not last_tx.question:
             return True
         question_attempts = self.get_question_attempts(self.active_intent, last_tx.question)
-        if question_attempts < MAX_QUESTION_ATTEMPTS:
+        if question_attempts < self.metadata['MAX_QUESTION_ATTEMPTS']:
             return True
         return False
 
@@ -846,7 +842,7 @@ class Conversation(JSONMixin, SaveMixin):
         if question.name not in self.question_attempts[intent.name]:
             self.question_attempts[intent.name][question.name] = 0
         attempts = self.question_attempts[intent.name][question.name] + 1
-        if attempts > MAX_QUESTION_ATTEMPTS:
+        if attempts > self.metadata['MAX_QUESTION_ATTEMPTS']:
             return False
         self.question_attempts[intent.name][question.name] = attempts
         return True
@@ -1147,7 +1143,7 @@ class Conversation(JSONMixin, SaveMixin):
                     if last_tx:
                         self.repeat_transaction(tx, last_tx, reason='user request')
                     else:
-                        if self.consecutive_fallback_count >= MAX_CONSECUTIVE_FALLBACK_ATTEMPTS:
+                        if self.consecutive_fallback_count >= self.metadata['MAX_CONSECUTIVE_FALLBACK_ATTEMPTS']:
                             self.add_common_response_message(tx, self.metadata, 'fallback_exhausted')
                         else:
                             self.add_common_response_message(tx, self.metadata, 'fallback')
@@ -1237,13 +1233,14 @@ class Conversation(JSONMixin, SaveMixin):
             if tx.completed_intent or (self.completed_intents and not self.active_intents):
                 self.add_common_response_message(tx, self.metadata, 'intents_complete')
             else:
-                if self.consecutive_fallback_count >= MAX_CONSECUTIVE_FALLBACK_ATTEMPTS:
+                if self.consecutive_fallback_count >= self.metadata['MAX_CONSECUTIVE_FALLBACK_ATTEMPTS']:
                     self.add_common_response_message(tx, self.metadata, 'fallback_exhausted')
                 else:
                     self.add_common_response_message(tx, self.metadata, 'fallback')
 
     def process_intent_response(self, tx, intent_response):
-        valid_intents, valid_entities = intent_response.get_valid()
+        valid_intents, valid_entities = intent_response.get_valid(intent_threshold=self.metadata['INTENT_FILTER_THRESHOLD'],
+                                                                  entity_threshold=self.metadata['ENTITY_FILTER_THRESHOLD'])
         if not valid_intents:
             warn('no valid intents found')
         self.create_response_message(tx, valid_intents, valid_entities)
