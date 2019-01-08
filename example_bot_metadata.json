@@ -1,4 +1,10 @@
 {
+    "INTENT_FILTER_THRESHOLD": 0.50,
+    "ENTITY_FILTER_THRESHOLD": 0.50,
+    "MAX_QUESTION_ATTEMPTS": 2,
+    "MAX_CONSECUTIVE_MESSAGE_ATTEMPTS": 2,
+    "MAX_CONSECUTIVE_REPEAT_ATTEMPTS": 2,
+
     "COMMON_MESSAGES": {
         "intents_complete": {
             "prompts": [
@@ -15,6 +21,8 @@
 
     "INTENT_METADATA": {
         "IntentXYZ": {
+            "help": ["This is the intent level help"],
+            "why": ["This is the intent level why"],
             "responses": {
                 "Active": [
                     "Lets do XYZ now.",

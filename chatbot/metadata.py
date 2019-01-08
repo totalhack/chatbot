@@ -15,18 +15,13 @@ BOT_METADATA = {}
 DEFAULT_INTENT_FILTER_THRESHOLD = 0.50
 DEFAULT_ENTITY_FILTER_THRESHOLD = 0.50
 DEFAULT_MAX_QUESTION_ATTEMPTS = 2
-DEFAULT_MAX_CONSECUTIVE_FALLBACK_ATTEMPTS = 2
+DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS = 2
 DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS = 2
 
 COMMON_MESSAGES = {
     'fallback': [
         "Sorry, I didn't get that",
     ],
-
-    'fallback_exhausted': {
-        'prompts': ["I'm sorry, I'm unable to help you at this time"],
-        'action': Actions.EndConversation,
-    },
 
     'goodbye': [
         "Thanks. Have a nice day!"
@@ -40,6 +35,7 @@ COMMON_MESSAGES = {
     'help': [
         "This is the global help message",
     ],
+
 
     'initial_prompt': [
         "How can I help you today?"
@@ -66,6 +62,11 @@ COMMON_MESSAGES = {
                            CommonIntents.ConfirmNo: Actions.NoAction}
     },
 
+    'message_exhausted': {
+        'prompts': ["I'm sorry, I'm unable to help you at this time"],
+        'action': Actions.EndConversation,
+    },
+
     'repeat_exhausted': {
         'prompts': ["I'm sorry, I'm unable to help you right now"],
         'action': Actions.EndConversation,
@@ -75,6 +76,11 @@ COMMON_MESSAGES = {
         "Sorry, I didn't get that",
         "Sorry, I couldn't understand your answer"
     ],
+
+    'why': [
+        "This is the global why message",
+    ],
+
 }
 
 INTENT_METADATA = {
@@ -96,6 +102,15 @@ INTENT_METADATA = {
         'is_answer': True
     },
 
+    CommonIntents.Greeting: {
+        'responses': {
+            ResponseTypes.Active: [
+                'Hi, how are you?',
+            ],
+        },
+        'is_greeting': True,
+    },
+
     CommonIntents.Help: {
         'repeatable': True,
         'preemptive': True,
@@ -108,14 +123,12 @@ INTENT_METADATA = {
         'is_answer': False
     },
 
-    CommonIntents.Greeting: {
-        'responses': {
-            ResponseTypes.Active: [
-                'Hi, how are you?',
-            ],
-        },
-        'is_greeting': True,
+    CommonIntents.Why: {
+        'repeatable': True,
+        'preemptive': True,
+        'is_answer': False
     },
+
 }
 
 ENTITY_HANDLERS = {
@@ -199,7 +212,7 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
             INTENT_FILTER_THRESHOLD=bot_metadata.get('INTENT_FILTER_THRESHOLD', DEFAULT_INTENT_FILTER_THRESHOLD),
             ENTITY_FILTER_THRESHOLD=bot_metadata.get('ENTITY_FILTER_THRESHOLD', DEFAULT_ENTITY_FILTER_THRESHOLD),
             MAX_QUESTION_ATTEMPTS=bot_metadata.get('MAX_QUESTION_ATTEMPTS', DEFAULT_MAX_QUESTION_ATTEMPTS),
-            MAX_CONSECUTIVE_FALLBACK_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_FALLBACK_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_FALLBACK_ATTEMPTS),
+            MAX_CONSECUTIVE_MESSAGE_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_MESSAGE_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS),
             MAX_CONSECUTIVE_REPEAT_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_REPEAT_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS),
             INTENT_METADATA=intent_metadata,
             ENTITY_HANDLERS=entity_handlers,
@@ -236,6 +249,7 @@ def is_valid_action(val):
 class MessageSchema(Schema):
     prompts = fields.List(fields.Str())
     help = fields.List(fields.Str())
+    why = fields.List(fields.Str())
     entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
     # TODO: validate it is a valid intent
     intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
@@ -256,6 +270,7 @@ class MessageField(fields.Field):
 class SlotFollowUpSchema(Schema):
     prompts = fields.List(fields.Str(), required=True)
     help = fields.List(fields.Str())
+    why = fields.List(fields.Str())
     entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
     # TODO: validate it is a valid intent
     intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
@@ -264,6 +279,7 @@ class SlotFollowUpSchema(Schema):
 class IntentSlotSchema(Schema):
     prompts = fields.List(fields.Str())
     help = fields.List(fields.Str())
+    why = fields.List(fields.Str())
     follow_up = fields.Nested(SlotFollowUpSchema)
     entity_handler = fields.Str()
     autofill = fields.Boolean()
@@ -276,6 +292,7 @@ class IntentMetadataSchema(Schema):
     slots = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentSlotSchema))
     fulfillment = fields.Nested(IntentFulfillmentSchema)
     help = fields.List(fields.Str())
+    why = fields.List(fields.Str())
     repeatable = fields.Boolean()
     preemptive = fields.Boolean()
     is_answer = fields.Boolean()
@@ -285,7 +302,7 @@ class BotMetadataSchema(Schema):
     INTENT_FILTER_THRESHOLD = fields.Float(validate=is_zero_to_one)
     ENTITY_FILTER_THRESHOLD = fields.Float(validate=is_zero_to_one)
     MAX_QUESTION_ATTEMPTS = fields.Integer()
-    MAX_CONSECUTIVE_FALLBACK_ATTEMPTS = fields.Integer()
+    MAX_CONSECUTIVE_MESSAGE_ATTEMPTS = fields.Integer()
     MAX_CONSECUTIVE_REPEAT_ATTEMPTS = fields.Integer()
     COMMON_MESSAGES = fields.Dict(keys=fields.Str(), values=MessageField(), required=True)
     ENTITY_HANDLERS = fields.Dict(keys=fields.Str(), values=fields.Str())

@@ -19,6 +19,7 @@ class CommonIntents(object):
     NoIntent = 'None' # TODO: for NLUs to convert intent names to canon values
     Repeat = 'Repeat'
     Greeting = 'Greeting'
+    Why = 'Why'
 
 class ResponseTypes(object):
     Active = 'Active'

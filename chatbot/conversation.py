@@ -1,4 +1,4 @@
-from collections import OrderedDict
+from collections import defaultdict, OrderedDict
 import copy
 from importlib import import_module
 import requests
@@ -80,23 +80,26 @@ def message_from_dict(message_dict):
                         message_dict['prompts'],
                         intent_actions=message_dict.get('intent_actions', None),
                         entity_actions=message_dict.get('entity_actions', None),
-                        help=message_dict.get('help', None))
+                        help=message_dict.get('help', None),
+                        why=message_dict.get('why', None))
     elif message_type == 'slot':
         return Slot(message_dict['name'],
                     message_dict['prompts'],
                     entity_handler_name=message_dict.get('entity_handler_name', None),
                     follow_up=message_dict.get('follow_up', None),
-                    help=message_dict.get('help', None))
+                    help=message_dict.get('help', None),
+                    why=message_dict.get('why', None))
     else:
         assert False, 'Invalid message type: %s' % message_type
 
 class Question(Message):
     repr_attrs = ['name']
 
-    def __init__(self, name, prompts, intent_actions=None, entity_actions=None, help=None):
+    def __init__(self, name, prompts, intent_actions=None, entity_actions=None, help=None, why=None):
         super(Question, self).__init__(name, prompts)
         self.intent_actions = intent_actions
         self.help = help
+        self.why = why
         if intent_actions:
             assert isinstance(intent_actions, dict), 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
         self.entity_actions = entity_actions
@@ -115,6 +118,12 @@ class Question(Message):
         help = random.choice(self.help)
         return help
 
+    def get_why(self):
+        if not self.why:
+            return None
+        why = random.choice(self.why)
+        return why
+
 class Slot(Question):
     repr_attrs = ['name', 'value']
 
@@ -132,13 +141,14 @@ class Slot(Question):
 
         autofill = slot_info.get('autofill', None)
         help = slot_info.get('help', None)
+        why = slot_info.get('why', None)
 
-        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up, autofill=autofill, help=help)
+        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up, autofill=autofill, help=help, why=why)
 
-    def __init__(self, name, prompts, entity_handler_name=None, follow_up=None, autofill=None, help=None):
+    def __init__(self, name, prompts, entity_handler_name=None, follow_up=None, autofill=None, help=None, why=None):
         # TODO: should slot be filled by an action? Allow overriding intent/entity actions for slots?
         entity_actions = {name: Actions.NoAction}
-        super(Slot, self).__init__(name, prompts, entity_actions=entity_actions, help=help)
+        super(Slot, self).__init__(name, prompts, entity_actions=entity_actions, help=help, why=why)
         if entity_handler_name:
             assert type(entity_handler_name) in (str, unicode), 'Invalid entity handler: %s' % entity_handler_name
         self.entity_handler_name = entity_handler_name
@@ -164,7 +174,8 @@ class Slot(Question):
                         entity_handler_name=self.entity_handler_name,
                         follow_up=copy.deepcopy(self.follow_up),
                         autofill=self.autofill,
-                        help=self.help)
+                        help=self.help,
+                        why=self.why)
         if isinstance(self.value, Entity):
             new_slot.value = self.value.copy()
         else:
@@ -185,13 +196,14 @@ class FollowUp(Question):
             follow_up = cls(follow_up_name, follow_up_info['prompts'],
                             intent_actions=follow_up_info.get('intent_actions', DEFAULT_FOLLOW_UP_ACTIONS),
                             entity_actions=entity_actions,
-                            help=follow_up_info.get('help', None))
+                            help=follow_up_info.get('help', None),
+                            why=follow_up_info.get('why', None))
         return follow_up
 
 class Intent(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'score']
 
-    def __init__(self, metadata, name, score, responses=None, slots=None, repeatable=False, preemptive=False, fulfillment=None, is_answer=False, is_greeting=False, help=None):
+    def __init__(self, metadata, name, score, responses=None, slots=None, repeatable=False, preemptive=False, fulfillment=None, is_answer=False, is_greeting=False, help=None, why=None):
         self.name = name
         self.score = score
         self.repeatable = repeatable
@@ -199,6 +211,7 @@ class Intent(PrintMixin, JSONMixin):
         self.fulfillment = fulfillment
         self.fulfillment_data = None
         self.help = help
+        self.why = why
         self.is_answer = is_answer
         self.is_greeting = is_greeting
         self.is_common_intent = is_common_intent(name)
@@ -268,6 +281,12 @@ class Intent(PrintMixin, JSONMixin):
             return None
         help = random.choice(self.help)
         return help
+
+    def get_why(self):
+        if not self.why:
+            return None
+        why = random.choice(self.why)
+        return why
 
 class Entity(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'type', 'value', 'score']
@@ -705,8 +724,8 @@ class Conversation(JSONMixin, SaveMixin):
         self.active_intent = None
         self.question_attempts = OrderedDictPlus()
         self.completed = False
+        self.consecutive_message_count = defaultdict(int)
         self.consecutive_repeat_count = 0
-        self.consecutive_fallback_count = 0
 
     def save(self):
         convo = Conversations(id=self.id, data=json.dumps(self.get_save_data()))
@@ -1178,24 +1197,57 @@ class Conversation(JSONMixin, SaveMixin):
                             else:
                                 self.abort_intent(tx)
                     else:
-                        if self.consecutive_fallback_count >= self.metadata['MAX_CONSECUTIVE_FALLBACK_ATTEMPTS']:
-                            self.add_common_response_message(tx, self.metadata, 'fallback_exhausted')
+                        if self.consecutive_message_count['fallback'] >= self.metadata['MAX_CONSECUTIVE_MESSAGE_ATTEMPTS']:
+                            self.add_common_response_message(tx, self.metadata, 'message_exhausted')
                         else:
                             self.add_common_response_message(tx, self.metadata, 'fallback')
                     return
+
+                # TODO: refactor to share logic
 
                 if intent.name == CommonIntents.Help:
                     dbg('Help Intent')
                     if last_tx and last_tx.question and last_tx.question.help:
                         help_msg = last_tx.question.get_help()
                         msg_name = '%s:help' % last_tx.question.name
+                        if self.consecutive_message_count[msg_name] >= self.metadata['MAX_CONSECUTIVE_MESSAGE_ATTEMPTS']:
+                            self.add_common_response_message(tx, self.metadata, 'message_exhausted')
+                            return
                         self.add_response_message(tx, msg_name, help_msg)
                     elif self.active_intent and self.active_intent.help:
                         help_msg = self.active_intent.get_help()
                         msg_name = '%s:help' % self.active_intent.name
+                        if self.consecutive_message_count[msg_name] >= self.metadata['MAX_CONSECUTIVE_MESSAGE_ATTEMPTS']:
+                            self.add_common_response_message(tx, self.metadata, 'message_exhausted')
+                            return
                         self.add_response_message(tx, msg_name, help_msg)
                     else:
+                        if self.consecutive_message_count['help'] >= self.metadata['MAX_CONSECUTIVE_MESSAGE_ATTEMPTS']:
+                            self.add_common_response_message(tx, self.metadata, 'message_exhausted')
+                            return
                         self.add_common_response_message(tx, self.metadata, 'help')
+
+                if intent.name == CommonIntents.Why:
+                    dbg('Why Intent')
+                    if last_tx and last_tx.question and last_tx.question.why:
+                        why_msg = last_tx.question.get_why()
+                        msg_name = '%s:why' % last_tx.question.name
+                        if self.consecutive_message_count[msg_name] >= self.metadata['MAX_CONSECUTIVE_MESSAGE_ATTEMPTS']:
+                            self.add_common_response_message(tx, self.metadata, 'message_exhausted')
+                            return
+                        self.add_response_message(tx, msg_name, why_msg)
+                    elif self.active_intent and self.active_intent.why:
+                        why_msg = self.active_intent.get_why()
+                        msg_name = '%s:why' % self.active_intent.name
+                        if self.consecutive_message_count[msg_name] >= self.metadata['MAX_CONSECUTIVE_MESSAGE_ATTEMPTS']:
+                            self.add_common_response_message(tx, self.metadata, 'message_exhausted')
+                            return
+                        self.add_response_message(tx, msg_name, why_msg)
+                    else:
+                        if self.consecutive_message_count['why'] >= self.metadata['MAX_CONSECUTIVE_MESSAGE_ATTEMPTS']:
+                            self.add_common_response_message(tx, self.metadata, 'message_exhausted')
+                            return
+                        self.add_common_response_message(tx, self.metadata, 'why')
 
             else:
                 if intent.is_greeting:
@@ -1205,7 +1257,7 @@ class Conversation(JSONMixin, SaveMixin):
 
         if (not greeted) and (not last_tx):
             dbg('Adding greeting on first transaction')
-            self.add_common_response_message(tx, self.metadata, 'greeting')
+            self.add_common_response_message(tx, self.metadata, 'greeting', prepend=True)
             if not valid_intents:
                 # It's the first message and we didn't recognize the intent of the user
                 self.add_common_response_message(tx, self.metadata, 'initial_prompt')
@@ -1285,8 +1337,8 @@ class Conversation(JSONMixin, SaveMixin):
             if tx.completed_intent or (self.completed_intents and not self.active_intents):
                 self.add_common_response_message(tx, self.metadata, 'intents_complete')
             else:
-                if self.consecutive_fallback_count >= self.metadata['MAX_CONSECUTIVE_FALLBACK_ATTEMPTS']:
-                    self.add_common_response_message(tx, self.metadata, 'fallback_exhausted')
+                if self.consecutive_message_count['fallback'] >= self.metadata['MAX_CONSECUTIVE_MESSAGE_ATTEMPTS']:
+                    self.add_common_response_message(tx, self.metadata, 'message_exhausted')
                 else:
                     self.add_common_response_message(tx, self.metadata, 'fallback')
 
@@ -1317,16 +1369,17 @@ class Conversation(JSONMixin, SaveMixin):
             context = self.get_message_context()
             response_message = tx.format_response_message(context=context)
 
-        if 'fallback' in tx.response_messages:
-            self.consecutive_fallback_count += 1
-            dbg('Consecutive fallback messages: %s' % self.consecutive_fallback_count)
-        else:
-            self.consecutive_fallback_count = 0
-
         if tx.repeat_id:
             self.consecutive_repeat_count += 1
             dbg('Consecutive repeat messages: %s' % self.consecutive_repeat_count)
         else:
             self.consecutive_repeat_count = 0
+
+        for key in tx.response_messages:
+            self.consecutive_message_count[key] += 1
+            dbg('Consecutive %s messages: %s' % (key, self.consecutive_message_count[key]))
+        for key in self.consecutive_message_count:
+            if key not in tx.response_messages:
+                self.consecutive_message_count[key] = 0
 
         return response_message
