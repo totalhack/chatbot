@@ -10,8 +10,9 @@ import sys
 from flask import Response, current_app
 
 def st():
+    import inspect
     import pdb
-    pdb.set_trace()
+    pdb.Pdb().set_trace(inspect.currentframe().f_back)
 
 def get_class_vars(cls):
     return [i for i in dir(cls) if (not callable(i)) and (not i.startswith('_'))]
@@ -48,13 +49,14 @@ class OrderedDictPlus(OrderedDict):
         first = root[1]
 
         if key in self:
-            link = self._OrderedDict__map[key]
-            link_prev, link_next, _ = link
-            link_prev[1] = link_next
-            link_next[0] = link_prev
-            link[0] = root
-            link[1] = first
-            root[1] = first[0] = link
+            if first[2] != key:
+                link = self._OrderedDict__map[key]
+                link_prev, link_next, _ = link
+                link_prev[1] = link_next
+                link_next[0] = link_prev
+                link[0] = root
+                link[1] = first
+                root[1] = first[0] = link
         else:
             root[1] = first[0] = self._OrderedDict__map[key] = [root, first, key]
             dict_setitem(self, key, value)

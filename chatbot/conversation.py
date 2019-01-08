@@ -79,21 +79,24 @@ def message_from_dict(message_dict):
         return Question(message_dict['name'],
                         message_dict['prompts'],
                         intent_actions=message_dict.get('intent_actions', None),
-                        entity_actions=message_dict.get('entity_actions', None))
+                        entity_actions=message_dict.get('entity_actions', None),
+                        help=message_dict.get('help', None))
     elif message_type == 'slot':
         return Slot(message_dict['name'],
                     message_dict['prompts'],
                     entity_handler_name=message_dict.get('entity_handler_name', None),
-                    follow_up=message_dict.get('follow_up', None))
+                    follow_up=message_dict.get('follow_up', None),
+                    help=message_dict.get('help', None))
     else:
         assert False, 'Invalid message type: %s' % message_type
 
 class Question(Message):
     repr_attrs = ['name']
 
-    def __init__(self, name, prompts, intent_actions=None, entity_actions=None):
+    def __init__(self, name, prompts, intent_actions=None, entity_actions=None, help=None):
         super(Question, self).__init__(name, prompts)
         self.intent_actions = intent_actions
+        self.help = help
         if intent_actions:
             assert isinstance(intent_actions, dict), 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
         self.entity_actions = entity_actions
@@ -105,6 +108,12 @@ class Question(Message):
 
     def get_entity_actions(self):
         return self.entity_actions
+
+    def get_help(self):
+        if not self.help:
+            return None
+        help = random.choice(self.help)
+        return help
 
 class Slot(Question):
     repr_attrs = ['name', 'value']
@@ -122,13 +131,14 @@ class Slot(Question):
             entity_handler_name = metadata['ENTITY_HANDLERS'][slot_name]
 
         autofill = slot_info.get('autofill', None)
+        help = slot_info.get('help', None)
 
-        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up, autofill=autofill)
+        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up, autofill=autofill, help=help)
 
-    def __init__(self, name, prompts, entity_handler_name=None, follow_up=None, autofill=None):
+    def __init__(self, name, prompts, entity_handler_name=None, follow_up=None, autofill=None, help=None):
         # TODO: should slot be filled by an action? Allow overriding intent/entity actions for slots?
         entity_actions = {name: Actions.NoAction}
-        super(Slot, self).__init__(name, prompts, entity_actions=entity_actions)
+        super(Slot, self).__init__(name, prompts, entity_actions=entity_actions, help=help)
         if entity_handler_name:
             assert type(entity_handler_name) in (str, unicode), 'Invalid entity handler: %s' % entity_handler_name
         self.entity_handler_name = entity_handler_name
@@ -153,7 +163,8 @@ class Slot(Question):
                         copy.deepcopy(self.prompts),
                         entity_handler_name=self.entity_handler_name,
                         follow_up=copy.deepcopy(self.follow_up),
-                        autofill=self.autofill)
+                        autofill=self.autofill,
+                        help=self.help)
         if isinstance(self.value, Entity):
             new_slot.value = self.value.copy()
         else:
@@ -173,19 +184,21 @@ class FollowUp(Question):
             entity_actions = {slot_name: Actions.ReplaceSlot}
             follow_up = cls(follow_up_name, follow_up_info['prompts'],
                             intent_actions=follow_up_info.get('intent_actions', DEFAULT_FOLLOW_UP_ACTIONS),
-                            entity_actions=entity_actions)
+                            entity_actions=entity_actions,
+                            help=follow_up_info.get('help', None))
         return follow_up
 
 class Intent(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'score']
 
-    def __init__(self, metadata, name, score, responses=None, slots=None, repeatable=False, preemptive=False, fulfillment=None, is_answer=False, is_greeting=False):
+    def __init__(self, metadata, name, score, responses=None, slots=None, repeatable=False, preemptive=False, fulfillment=None, is_answer=False, is_greeting=False, help=None):
         self.name = name
         self.score = score
         self.repeatable = repeatable
         self.preemptive = preemptive
         self.fulfillment = fulfillment
         self.fulfillment_data = None
+        self.help = help
         self.is_answer = is_answer
         self.is_greeting = is_greeting
         self.is_common_intent = is_common_intent(name)
@@ -249,6 +262,12 @@ class Intent(PrintMixin, JSONMixin):
                               data=json.dumps(fulfillment_data))
             db.session.merge(ff)
             db.session.commit()
+
+    def get_help(self):
+        if not self.help:
+            return None
+        help = random.choice(self.help)
+        return help
 
 class Entity(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'type', 'value', 'score']
@@ -405,7 +424,6 @@ class IntentResponse(PrintMixin, JSONMixin):
             self.entities.append(Entity(name=k, type=k, value=v, from_context=True))
 
     def get_valid(self, intent_threshold=0, entity_threshold=0):
-        st()
         valid_intents = self.filter_intents(intent_threshold)
         valid_entities = self.filter_entities(entity_threshold)
         return valid_intents, valid_entities
@@ -503,7 +521,9 @@ class Transaction(JSONMixin, SaveMixin):
                   'completed_intent',
                   'expected_entities',
                   'expected_intents',
-                  'expected_text']
+                  'expected_text',
+                  'repeat_id',
+                  'repeat_reason']
 
     dont_copy_attrs = [
         'id',
@@ -530,7 +550,7 @@ class Transaction(JSONMixin, SaveMixin):
         self.expected_entities = None
         self.expected_intents = None
         self.expected_text = None
-        self.is_repeat = False
+        self.repeat_id = None
         self.repeat_reason = None
 
     def save(self):
@@ -685,6 +705,7 @@ class Conversation(JSONMixin, SaveMixin):
         self.active_intent = None
         self.question_attempts = OrderedDictPlus()
         self.completed = False
+        self.consecutive_repeat_count = 0
         self.consecutive_fallback_count = 0
 
     def save(self):
@@ -807,18 +828,26 @@ class Conversation(JSONMixin, SaveMixin):
         return None
 
     def transaction_repeatable(self, last_tx):
-        if not last_tx.question:
+        repeat_tx = last_tx
+        if last_tx.repeat_id:
+            repeat_tx = self.transactions[last_tx.repeat_id]
+        if not repeat_tx.question:
             return True
-        question_attempts = self.get_question_attempts(self.active_intent, last_tx.question)
+        question_attempts = self.get_question_attempts(self.active_intent, repeat_tx.question)
         if question_attempts < self.metadata['MAX_QUESTION_ATTEMPTS']:
             return True
         return False
 
     def repeat_transaction(self, tx, last_tx, reason=None, question_only=False):
-        if last_tx.question:
-            assert self.add_question_attempt(self.active_intent, last_tx.question), 'Unable to repeat transaction. Question exhausted: %s' % last_tx.question
-        tx.copy_data_from_transaction(last_tx)
-        tx.repeat = True
+        repeat_tx = last_tx
+        if last_tx.repeat_id:
+            repeat_tx = self.transactions[last_tx.repeat_id]
+
+        if repeat_tx.question:
+            assert self.add_question_attempt(self.active_intent, repeat_tx.question), 'Unable to repeat transaction. Question exhausted: %s' % repeat_tx.question
+
+        tx.copy_data_from_transaction(repeat_tx)
+        tx.repeat_id = repeat_tx.id
         tx.repeat_reason = reason
         if question_only:
             assert tx.question, 'Last TX does not have a question to repeat'
@@ -1141,7 +1170,13 @@ class Conversation(JSONMixin, SaveMixin):
                 if intent.name == CommonIntents.Repeat:
                     dbg('Repeat Intent')
                     if last_tx:
-                        self.repeat_transaction(tx, last_tx, reason='user request')
+                        if self.consecutive_repeat_count >= self.metadata['MAX_CONSECUTIVE_REPEAT_ATTEMPTS']:
+                            self.add_common_response_message(tx, self.metadata, 'repeat_exhausted')
+                        else:
+                            if self.transaction_repeatable(last_tx):
+                                self.repeat_transaction(tx, last_tx, reason='user request')
+                            else:
+                                self.abort_intent(tx)
                     else:
                         if self.consecutive_fallback_count >= self.metadata['MAX_CONSECUTIVE_FALLBACK_ATTEMPTS']:
                             self.add_common_response_message(tx, self.metadata, 'fallback_exhausted')
@@ -1151,8 +1186,16 @@ class Conversation(JSONMixin, SaveMixin):
 
                 if intent.name == CommonIntents.Help:
                     dbg('Help Intent')
-                    self.add_common_response_message(tx, self.metadata, 'help')
-                    return
+                    if last_tx and last_tx.question and last_tx.question.help:
+                        help_msg = last_tx.question.get_help()
+                        msg_name = '%s:help' % last_tx.question.name
+                        self.add_response_message(tx, msg_name, help_msg)
+                    elif self.active_intent and self.active_intent.help:
+                        help_msg = self.active_intent.get_help()
+                        msg_name = '%s:help' % self.active_intent.name
+                        self.add_response_message(tx, msg_name, help_msg)
+                    else:
+                        self.add_common_response_message(tx, self.metadata, 'help')
 
             else:
                 if intent.is_greeting:
@@ -1177,8 +1220,17 @@ class Conversation(JSONMixin, SaveMixin):
                     return
             else:
                 if self.transaction_repeatable(last_tx):
+                    # repeat_transaction will overwrite messages, so copy these first
+                    tx_messages = copy.deepcopy(tx.response_messages)
+                    tx_requires_answer = tx.requires_answer()
                     self.repeat_transaction(tx, last_tx, reason='last transaction not answered', question_only=True)
-                    self.add_common_response_message(tx, self.metadata, 'unanswered', prepend=True)
+                    if tx_messages:
+                        # Messages were already added to this tx by some intent handled above
+                        assert not tx_requires_answer, 'A question was asked while another unanswered question is in progress'
+                        for msg_name, msg in reversed(tx_messages.items()):
+                            self.add_response_message(tx, msg_name, msg, prepend=True)
+                    else:
+                        self.add_common_response_message(tx, self.metadata, 'unanswered', prepend=True)
                 else:
                     self.abort_intent(tx)
                 return
@@ -1270,5 +1322,11 @@ class Conversation(JSONMixin, SaveMixin):
             dbg('Consecutive fallback messages: %s' % self.consecutive_fallback_count)
         else:
             self.consecutive_fallback_count = 0
+
+        if tx.repeat_id:
+            self.consecutive_repeat_count += 1
+            dbg('Consecutive repeat messages: %s' % self.consecutive_repeat_count)
+        else:
+            self.consecutive_repeat_count = 0
 
         return response_message

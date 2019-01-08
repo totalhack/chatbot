@@ -16,6 +16,7 @@ DEFAULT_INTENT_FILTER_THRESHOLD = 0.50
 DEFAULT_ENTITY_FILTER_THRESHOLD = 0.50
 DEFAULT_MAX_QUESTION_ATTEMPTS = 2
 DEFAULT_MAX_CONSECUTIVE_FALLBACK_ATTEMPTS = 2
+DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS = 2
 
 COMMON_MESSAGES = {
     'fallback': [
@@ -37,7 +38,7 @@ COMMON_MESSAGES = {
     ],
 
     'help': [
-        "Still need to add a help message",
+        "This is the global help message",
     ],
 
     'initial_prompt': [
@@ -63,6 +64,11 @@ COMMON_MESSAGES = {
         ],
         'intent_actions': {CommonIntents.ConfirmYes: Actions.CancelIntent,
                            CommonIntents.ConfirmNo: Actions.NoAction}
+    },
+
+    'repeat_exhausted': {
+        'prompts': ["I'm sorry, I'm unable to help you right now"],
+        'action': Actions.EndConversation,
     },
 
     'unanswered': [
@@ -168,7 +174,7 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
         f.close()
 
         try:
-            bot_metadata = schema.loads(raw) # This does the schema check, but has a bug in object_pairs_hook
+            bot_metadata = schema.loads(raw) # This does the schema check, but has a bug in object_pairs_hook so order is not preserved
             bot_metadata = json.loads(raw, object_pairs_hook=OrderedDict)
         except ValidationError, e:
             error('Metadata Validation Error')
@@ -194,6 +200,7 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
             ENTITY_FILTER_THRESHOLD=bot_metadata.get('ENTITY_FILTER_THRESHOLD', DEFAULT_ENTITY_FILTER_THRESHOLD),
             MAX_QUESTION_ATTEMPTS=bot_metadata.get('MAX_QUESTION_ATTEMPTS', DEFAULT_MAX_QUESTION_ATTEMPTS),
             MAX_CONSECUTIVE_FALLBACK_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_FALLBACK_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_FALLBACK_ATTEMPTS),
+            MAX_CONSECUTIVE_REPEAT_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_REPEAT_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS),
             INTENT_METADATA=intent_metadata,
             ENTITY_HANDLERS=entity_handlers,
             COMMON_MESSAGES=common_messages,
@@ -228,6 +235,7 @@ def is_valid_action(val):
 
 class MessageSchema(Schema):
     prompts = fields.List(fields.Str())
+    help = fields.List(fields.Str())
     entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
     # TODO: validate it is a valid intent
     intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
@@ -247,6 +255,7 @@ class MessageField(fields.Field):
 
 class SlotFollowUpSchema(Schema):
     prompts = fields.List(fields.Str(), required=True)
+    help = fields.List(fields.Str())
     entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
     # TODO: validate it is a valid intent
     intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
@@ -254,6 +263,7 @@ class SlotFollowUpSchema(Schema):
 
 class IntentSlotSchema(Schema):
     prompts = fields.List(fields.Str())
+    help = fields.List(fields.Str())
     follow_up = fields.Nested(SlotFollowUpSchema)
     entity_handler = fields.Str()
     autofill = fields.Boolean()
@@ -263,9 +273,9 @@ class IntentFulfillmentSchema(Schema):
 
 class IntentMetadataSchema(Schema):
     responses = fields.Dict(keys=fields.Str(validate=is_valid_response_type), values=fields.List(fields.Str()))
-    # XXX This needs to preserve order!
     slots = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentSlotSchema))
     fulfillment = fields.Nested(IntentFulfillmentSchema)
+    help = fields.List(fields.Str())
     repeatable = fields.Boolean()
     preemptive = fields.Boolean()
     is_answer = fields.Boolean()
@@ -276,6 +286,7 @@ class BotMetadataSchema(Schema):
     ENTITY_FILTER_THRESHOLD = fields.Float(validate=is_zero_to_one)
     MAX_QUESTION_ATTEMPTS = fields.Integer()
     MAX_CONSECUTIVE_FALLBACK_ATTEMPTS = fields.Integer()
+    MAX_CONSECUTIVE_REPEAT_ATTEMPTS = fields.Integer()
     COMMON_MESSAGES = fields.Dict(keys=fields.Str(), values=MessageField(), required=True)
     ENTITY_HANDLERS = fields.Dict(keys=fields.Str(), values=fields.Str())
     INTENT_METADATA = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentMetadataSchema), required=True)
