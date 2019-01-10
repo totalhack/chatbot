@@ -240,6 +240,7 @@ class Intent(PrintMixin, JSONMixin):
         return dict(conversation_id=convo.id,
                     transaction_id=tx.id,
                     intent_name=self.name,
+                    context=convo.context,
                     slot_data=slot_value_data)
 
     def fulfill(self, convo, tx, slot_data):
@@ -700,6 +701,7 @@ class Conversation(JSONMixin, SaveMixin):
     save_attrs = ['id',
                   'bot',
                   'nlu',
+                  'context',
                   'intents',
                   'active_intents',
                   'completed_intents',
@@ -714,6 +716,7 @@ class Conversation(JSONMixin, SaveMixin):
             dbg('Updating conversation metadata: %s' % metadata)
             self.metadata = dictmerge(copy.deepcopy(self.metadata), metadata, overwrite=True)
         self.nlu = nlu
+        self.context = {}
         self.transactions = OrderedDictPlus()
         # TODO: this intent dict will also contain values as slots become
         # filled, but similar intent objects get passed around/used that dont
@@ -820,6 +823,7 @@ class Conversation(JSONMixin, SaveMixin):
         if input.context:
             dbg('Adding context to intent_response: %s' % input.context)
             intent_response.add_entities_from_context(input.context)
+            self.context.update(input.context)
 
         dbg(vars(intent_response))
         tx.intent_response = intent_response

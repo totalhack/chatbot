@@ -28,8 +28,8 @@ def chat():
         bot = request.values['bot']
         metadata = json.loads(request.values.get('metadata', '{}'))
         convo_id = request.values.get('conversation_id', None)
-        dbg('Conversation ID: %s / Bot: %s' % (convo_id, bot), color='green')
-        dbg('Input: %s' % input, color='green')
+        dbg('Conversation ID: %s / Bot: %s' % (convo_id, bot))
+        dbg('Input: %s' % input)
 
         convo_cache = get_convo_cache(app.config)
 
@@ -42,7 +42,7 @@ def chat():
                 response = {'status': 'error', 'response': 'Conversation %s is already completed' % convo_id}
                 return jsonr(response)
         else:
-            dbg('Creating new conversation', color='green')
+            dbg('Creating new conversation')
             convo = Conversation(bot, metadata=metadata)
             convo_id = convo.id
             convo.save()
@@ -50,7 +50,7 @@ def chat():
         tx = convo.create_transaction()
 
         reply = convo.reply(tx, input)
-        dbg('Replying: %s' % reply, color='green')
+        dbg('Replying: %s' % reply)
 
         convo.save()
         tx.save()
@@ -77,24 +77,24 @@ def chat():
 @app.route('/fulfillment', methods=['POST'])
 def fulfillment():
     data = request.json
-    dbg('fulfillment called', color='magenta')
-    pprint(data)
+    dbg('fulfillment called')
+    dbg(data)
     response = {'status': 'success', 'message': None}
     return jsonr(response)
 
 @app.route('/fulfillment_with_message', methods=['POST'])
 def fulfillment_with_message():
     data = request.json
-    dbg('fulfillment called', color='magenta')
-    pprint(data)
+    dbg('fulfillment_with_message called')
+    dbg(data)
     response = {'status': 'success', 'message': 'Great job, you finished this!'}
     return jsonr(response)
 
 @app.route('/fulfillment_with_question', methods=['POST'])
 def fulfillment_with_question():
     data = request.json
-    dbg('fulfillment called', color='magenta')
-    pprint(data)
+    dbg('fulfillment_with_question called')
+    dbg(data)
     response = {'status': 'success',
                 'message': {'type': 'question',
                             'prompts': ['I couldnt find anyone to help. Would you like to try MyIntent instead?'],
@@ -105,16 +105,16 @@ def fulfillment_with_question():
 @app.route('/fulfillment_with_action', methods=['POST'])
 def fulfillment_with_action():
     data = request.json
-    dbg('fulfillment called', color='magenta')
-    pprint(data)
+    dbg('fulfillment_with_action called')
+    dbg(data)
     response = {'status': 'success', 'message': 'Great job, you are done.', 'action': Actions.EndConversation}
     return jsonr(response)
 
 @app.route('/fulfillment_with_error_status', methods=['POST'])
 def fulfillment_with_error_status():
     data = request.json
-    dbg('fulfillment called', color='magenta')
-    pprint(data)
+    dbg('fulfillment_with_error_status called')
+    dbg(data)
     response = {'status': 'error', 'message': None, 'status_reason': 'Fulfillment failed'}
     return jsonr(response)
 
