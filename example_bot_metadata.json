@@ -4,6 +4,7 @@
     "MAX_QUESTION_ATTEMPTS": 2,
     "MAX_CONSECUTIVE_MESSAGE_ATTEMPTS": 2,
     "MAX_CONSECUTIVE_REPEAT_ATTEMPTS": 2,
+    "NLU_CLASS": "chatbot.nlu.luis.LUISNLU",
 
     "COMMON_MESSAGES": {
         "intents_complete": {

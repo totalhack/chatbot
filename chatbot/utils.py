@@ -1,5 +1,6 @@
 from cachetools import TTLCache
 from collections import OrderedDict
+from importlib import import_module
 import json
 from json import JSONEncoder
 from pprint import pprint, pformat
@@ -16,6 +17,16 @@ def st():
 
 def get_class_vars(cls):
     return [i for i in dir(cls) if (not callable(i)) and (not i.startswith('_'))]
+
+def import_object(name):
+    if '.' not in name:
+        frame = sys._getframe(1)
+        module_name = frame.f_globals['__name__']
+        object_name = name
+    else:
+        module_name = '.'.join(name.split('.')[:-1])
+        object_name = name.split('.')[-1]
+    return getattr(import_module(module_name), object_name)
 
 def get_string_format_args(s):
     return [tup[1] for tup in string.Formatter().parse(s) if tup[1] is not None]
@@ -147,3 +158,20 @@ class PrintMixin(object):
 
     def __str__(self):
         return str(vars(self))
+
+def paged_call(func, size_param, offset_param, page_size, *_args, **_kwargs):
+    offset = 0
+    results = []
+
+    while True:
+        _kwargs.update({size_param: page_size,
+                        offset_param: offset})
+        result = func(*_args, **_kwargs)
+        results.extend(result)
+        result_len = len(result)
+        offset += result_len
+        if result_len < page_size:
+            break
+
+    print 'Got %d results' % offset
+    return results
