@@ -209,7 +209,8 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
             MAX_QUESTION_ATTEMPTS=bot_metadata.get('MAX_QUESTION_ATTEMPTS', DEFAULT_MAX_QUESTION_ATTEMPTS),
             MAX_CONSECUTIVE_MESSAGE_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_MESSAGE_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS),
             MAX_CONSECUTIVE_REPEAT_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_REPEAT_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS),
-            NLU_CLASS=bot_metadata.get('NLU_CLASS', DEFAULT_NLU_CLASS),
+            NLU_CLASS=bot_metadata.get('NLU_CLASS', app_config.get('NLU_CLASS', DEFAULT_NLU_CLASS)),
+            NLU_CONFIG=bot_metadata.get('NLU_CONFIG', app_config['NLU_CONFIG']),
             INTENT_METADATA=intent_metadata,
             ENTITY_HANDLERS=entity_handlers,
             COMMON_MESSAGES=common_messages,
@@ -301,6 +302,7 @@ class BotMetadataSchema(Schema):
     MAX_CONSECUTIVE_MESSAGE_ATTEMPTS = fields.Integer()
     MAX_CONSECUTIVE_REPEAT_ATTEMPTS = fields.Integer()
     NLU_CLASS = fields.Str()
+    NLU_CONFIG = fields.Dict(keys=fields.Str(), values=fields.Str())
     COMMON_MESSAGES = fields.Dict(keys=fields.Str(), values=MessageField(), required=True)
     ENTITY_HANDLERS = fields.Dict(keys=fields.Str(), values=fields.Str())
     INTENT_METADATA = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentMetadataSchema), required=True)

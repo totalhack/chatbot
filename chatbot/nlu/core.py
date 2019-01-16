@@ -7,7 +7,7 @@ class NLU(object):
     def __init__(self, config):
         self.config = config
 
-    def get_raw_response(self, metadata, query):
+    def get_raw_response(self, query):
         raise NotImplementedError
 
     def get_intents_from_raw_response(self, metadata, raw):
@@ -17,7 +17,7 @@ class NLU(object):
         raise NotImplementedError
 
     def process_query(self, metadata, query, last_tx=None):
-        raw = self.get_raw_response(metadata, query)
+        raw = self.get_raw_response(query)
         intents = self.get_intents_from_raw_response(metadata, raw)
         entities = self.get_entities_from_raw_response(metadata, raw)
 
@@ -29,5 +29,5 @@ class NLU(object):
         entities = entity_handler().process(query, entities)
         return IntentResponse(query, intents, entities=entities)
 
-    def get_intents(self, config):
+    def get_intents(self):
         raise NotImplementedError

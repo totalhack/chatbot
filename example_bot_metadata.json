@@ -4,7 +4,14 @@
     "MAX_QUESTION_ATTEMPTS": 2,
     "MAX_CONSECUTIVE_MESSAGE_ATTEMPTS": 2,
     "MAX_CONSECUTIVE_REPEAT_ATTEMPTS": 2,
+
     "NLU_CLASS": "chatbot.nlu.luis.LUISNLU",
+    "NLU_CONFIG": {
+        "LUIS_BASE_URL": "https://westus.api.cognitive.microsoft.com",
+        "LUIS_APP_ID": "<my luis app id>",
+        "LUIS_APP_VERSION": "<my luis app version>",
+        "LUIS_SUBKEY": "<my luis subkey>"
+    },
 
     "COMMON_MESSAGES": {
         "intents_complete": {

@@ -11,8 +11,6 @@ from chatbot.utils import *
 
 PAGE_SIZE = 250
 
-# TODO: make the NLU settings be per bot rather than in global config?
-
 def luis_predict(client, query, config=None, staging=True, verbose=True):
     if not config:
         config = current_app.config
@@ -48,8 +46,7 @@ class LUISNLU(NLU):
     def paged_request(self, endpoint, *args, **kwargs):
         return paged_call(endpoint, 'take', 'skip', PAGE_SIZE, self.config['LUIS_APP_ID'], self.config['LUIS_APP_VERSION'], *args, **kwargs)
 
-    def get_raw_response(self, metadata, query):
-        staging = True if self.config['DEBUG'] else False
+    def get_raw_response(self, query, staging=True):
         verbose = True # Needed to get multiple intents returned
         response = luis_predict(self.runtime_client, query, config=self.config, staging=staging, verbose=verbose)
         return response
@@ -113,8 +110,8 @@ class LUISNLU(NLU):
 
 if __name__ == '__main__':
     from chatbot import app
-    nlu = LUISNLU(app.config)
+    nlu = LUISNLU(app.config['NLU_CONFIG'])
     pprint(nlu.get_intents())
     pprint(nlu.get_entities())
     pprint(nlu.get_applications())
-    pprint(nlu.get_application_versions(app.config['LUIS_APP_ID']))
+    pprint(nlu.get_application_versions(app.config['NLU_CONFIG']['LUIS_APP_ID']))

@@ -321,7 +321,7 @@ class Conversation(JSONMixin, SaveMixin):
         if input.type == 'intent':
             intent_response = TriggeredIntentResponse(self.metadata, input.value)
         elif input.type == 'text':
-            nlu = get_nlu(self.nlu_class)(current_app.config)
+            nlu = get_nlu(self.nlu_class)(self.metadata['NLU_CONFIG'])
             intent_response = nlu.process_query(self.metadata, input.value, last_tx=last_tx)
         else:
             assert False, 'Invalid input: %s' % input
