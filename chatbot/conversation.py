@@ -193,7 +193,7 @@ class Transaction(JSONMixin, SaveMixin):
                     return True, action
 
         for intent in intents:
-            if not intent.is_common_intent:
+            if intent.is_app_intent:
                 dbg('App intent %s found in answer' % intent.name)
                 if self.active_intent and not (self.active_intent == self.completed_intent):
                     return True, '%s%s' % (VariableActions.ConfirmSwitchIntent, intent.name)
@@ -300,11 +300,11 @@ class Conversation(JSONMixin, SaveMixin):
             # If No, remove the suggested intent and continue with any active intents
             last_tx = self.get_last_transaction()
             if last_tx and last_tx.question and isinstance(last_tx.question, FollowUp):
-                expected_intents = {CommonIntents.ConfirmYes: Actions.CancelIntent,
-                                    CommonIntents.ConfirmNo: '%s%s' % (VariableActions.RepeatSlotAndRemoveIntent, intent_name)}
+                expected_intents = {CommonIntents.Yes: Actions.CancelIntent,
+                                    CommonIntents.No: '%s%s' % (VariableActions.RepeatSlotAndRemoveIntent, intent_name)}
             else:
-                expected_intents = {CommonIntents.ConfirmYes: Actions.CancelIntent,
-                                    CommonIntents.ConfirmNo: '%s%s' % (VariableActions.RemoveIntent, intent_name)}
+                expected_intents = {CommonIntents.Yes: Actions.CancelIntent,
+                                    CommonIntents.No: '%s%s' % (VariableActions.RemoveIntent, intent_name)}
             self.add_response_message(tx, msg_name, msg, expected_intents=expected_intents)
 
         elif action.startswith(VariableActions.Trigger):
@@ -541,14 +541,14 @@ class Conversation(JSONMixin, SaveMixin):
         return remaining_slots
 
     def add_active_intent(self, intent):
-        if not intent.repeatable:
+        if not intent.is_repeatable:
             assert intent.name not in self.intents, 'Intent is not repeatable: %s' % intent.name
         dbg('Adding active intent %s' % intent.name)
         self.intents[intent.name] = intent
         self.active_intents[intent.name] = intent
 
     def prepend_active_intent(self, intent):
-        if not intent.repeatable:
+        if not intent.is_repeatable:
             assert intent.name not in self.intents, 'Intent is not repeatable: %s' % intent.name
         dbg('Prepending active intent %s' % intent.name)
         self.intents[intent.name] = intent
@@ -680,14 +680,14 @@ class Conversation(JSONMixin, SaveMixin):
                     warn('greetings only allowed on first transaction, skipping %s' % intent.name)
                     continue
 
-            if intent.name in self.active_intents and not intent.repeatable:
+            if intent.name in self.active_intents and not intent.is_repeatable:
                 warn('intent %s already active' % intent.name)
                 continue
 
-            if intent.name in self.completed_intents and not intent.repeatable:
+            if intent.name in self.completed_intents and not intent.is_repeatable:
                 warn('intent %s already completed' % intent.name)
 
-            if intent.preemptive:
+            if intent.is_preemptive:
                 self.prepend_active_intent(intent)
                 tx.prepend_new_intent(intent)
 
@@ -759,6 +759,22 @@ class Conversation(JSONMixin, SaveMixin):
                             return
                         self.add_common_response_message(tx, self.metadata, 'why')
 
+                if intent.is_smalltalk:
+                    if i > 0:
+                        warn('smalltalk only allowed as top intent, skipping %s' % intent.name)
+                        continue
+
+                    if not self.metadata['SMALLTALK']:
+                        # TODO: should bot say "i dont support smalltalk?"
+                        warn('smalltalk disabled, skipping intent: %s' % intent.name)
+                        continue
+
+                    self.add_active_intent(intent)
+                    tx.add_new_intent(intent)
+                    # We are adding this under the assumption this intent will get removed because it is
+                    # preemptive.
+                    self.add_new_intent_message(tx, intent, response_type=ResponseTypes.Active, entities=valid_entities)
+
             else:
                 if intent.is_greeting:
                     greeted = True
@@ -802,7 +818,7 @@ class Conversation(JSONMixin, SaveMixin):
             if intent.is_answer:
                 dbg('Removing is_answer intent from active list: %s' % intent.name)
                 self.remove_active_intent(intent)
-            elif intent.preemptive and not intent.slots:
+            elif intent.is_preemptive and not intent.slots:
                 # We assume these already displayed any relevant message
                 dbg('Removing preemptive intent with no slots from active list: %s' % intent.name)
                 self.remove_active_intent(intent)

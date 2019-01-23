@@ -8,7 +8,8 @@ import unittest
 from chatbot import app
 from chatbot.metadata import *
 
-load_bot_metadata(app.config, load_tests=True)
+load_app_metadata(app.config, load_tests=True)
+assert COMMON_INTENT_METADATA
 assert BOT_METADATA
 
 TEST_BASE_URL = app.config.get('TEST_BASE_URL', 'http://127.0.0.1:9000')

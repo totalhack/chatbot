@@ -1,6 +1,5 @@
 from collections import OrderedDict
 from pprint import pprint
-import json
 
 from flask import render_template, request, Response
 import requests
@@ -13,7 +12,7 @@ from chatbot.metadata import *
 from chatbot.utils import *
 
 db.init_app(app)
-load_bot_metadata(app.config)
+load_app_metadata(app.config)
 setup_caching(app.config)
 
 @app.route('/')

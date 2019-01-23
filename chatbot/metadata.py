@@ -1,8 +1,6 @@
 from collections import OrderedDict
 import copy
 import glob
-import json
-import os
 from urlparse import urlparse
 
 from marshmallow import Schema, fields, ValidationError
@@ -11,6 +9,9 @@ from chatbot.core import *
 from chatbot.utils import *
 
 BOT_METADATA = {}
+COMMON_INTENT_FILE = os.path.join(os.path.dirname(__file__), 'nlu/common_intents.json')
+SMALLTALK_INTENT_FILE = os.path.join(os.path.dirname(__file__), 'nlu/smalltalk_intents.json')
+COMMON_INTENT_METADATA = {}
 
 DEFAULT_NLU_CLASS = 'chatbot.nlu.luis.LUISNLU'
 DEFAULT_INTENT_FILTER_THRESHOLD = 0.50
@@ -46,8 +47,8 @@ COMMON_MESSAGES = {
         'prompts': [
             "Is there anything else I can help you with today?",
         ],
-        'intent_actions': {CommonIntents.ConfirmYes: Actions.NoAction,
-                           CommonIntents.ConfirmNo: Actions.EndConversation}
+        'intent_actions': {CommonIntents.Yes: Actions.NoAction,
+                           CommonIntents.No: Actions.EndConversation}
     },
 
     'intent_aborted': {
@@ -59,8 +60,8 @@ COMMON_MESSAGES = {
         'prompts': [
             "Are you sure you want to cancel the current intent?",
         ],
-        'intent_actions': {CommonIntents.ConfirmYes: Actions.CancelIntent,
-                           CommonIntents.ConfirmNo: Actions.NoAction}
+        'intent_actions': {CommonIntents.Yes: Actions.CancelIntent,
+                           CommonIntents.No: Actions.NoAction}
     },
 
     'message_exhausted': {
@@ -84,55 +85,7 @@ COMMON_MESSAGES = {
 
 }
 
-INTENT_METADATA = {
-    CommonIntents.Cancel: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': False
-    },
-
-    CommonIntents.ConfirmNo: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': True
-    },
-
-    CommonIntents.ConfirmYes: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': True
-    },
-
-    CommonIntents.Greeting: {
-        'responses': {
-            ResponseTypes.Active: [
-                'Hi, how are you?',
-            ],
-        },
-        'is_greeting': True,
-    },
-
-    CommonIntents.Help: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': False
-    },
-
-    CommonIntents.Repeat: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': False
-    },
-
-    CommonIntents.Why: {
-        'repeatable': True,
-        'preemptive': True,
-        'is_answer': False
-    },
-
-}
-
-ENTITY_HANDLERS = {
+COMMON_ENTITY_HANDLERS = {
     'address': 'AddressEntityHandler',
     'street_address': 'AddressEntityHandler',
 }
@@ -141,6 +94,21 @@ def is_main_config_file(filename):
     if filename == os.environ['CHATBOT_CONFIG']:
         return True
     return False
+
+def parse_metadata_file(filename, schema):
+    f = open(filename)
+    raw = f.read()
+    f.close()
+
+    try:
+        metadata = schema.loads(raw) # This does the schema check, but has a bug in object_pairs_hook so order is not preserved
+        metadata = json.loads(raw, object_pairs_hook=OrderedDict)
+    except ValidationError, e:
+        error('Metadata Validation Error')
+        print json.dumps(e.message, indent=2)
+        raise
+
+    return metadata
 
 def get_all_bot_metadata():
     return BOT_METADATA
@@ -168,27 +136,28 @@ def load_bot_metadata(app_config, load_tests=False):
 def check_bot_intent_metadata(bot_intent_metadata):
     # Additional checks to enforce supported behavior
     for intent_name, intent_dict in bot_intent_metadata.items():
-        assert not intent_dict.has_key('preemptive'), 'Preemptive bot intents are not currently supported: %s' % intent_name
+        assert not intent_dict.has_key('is_preemptive'), 'Preemptive bot intents are not currently supported: %s' % intent_name
+
+def clear_utterances(intent_metadata):
+    # When loading bot metadata for conversation flow we dont need this information
+    for intent_name, intent_dict in intent_metadata.items():
+        if intent_dict.has_key('utterances'):
+            del intent_dict['utterances']
+
+def update_intents(intent_metadata, update_dict):
+    for intent_name, intent_dict in intent_metadata.items():
+        intent_dict.update(update_dict.copy())
 
 def load_bot_metadata_from_directory(app_config, load_tests=False):
     directory = app_config['BOT_METADATA_DIRECTORY'].rstrip('/')
     files = glob.glob("%s/*.json" % directory)
     schema = BotMetadataSchema()
+    intent_file_schema = IntentFileSchema()
+    smalltalk_metadata = None
 
     count = 0
     for filename in files:
-        f = open(filename)
-        raw = f.read()
-        f.close()
-
-        try:
-            bot_metadata = schema.loads(raw) # This does the schema check, but has a bug in object_pairs_hook so order is not preserved
-            bot_metadata = json.loads(raw, object_pairs_hook=OrderedDict)
-        except ValidationError, e:
-            error('Metadata Validation Error')
-            print json.dumps(e.message, indent=2)
-            raise
-
+        bot_metadata = parse_metadata_file(filename, schema)
         bot_name = os.path.basename(filename).split('.json')[0]
         bot_intent_metadata = bot_metadata.get('INTENT_METADATA', {})
         bot_entity_handlers = bot_metadata.get('ENTITY_HANDLERS', {})
@@ -196,10 +165,21 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
 
         check_bot_intent_metadata(bot_intent_metadata)
 
-        intent_metadata = copy.deepcopy(INTENT_METADATA)
+        intent_metadata = copy.deepcopy(COMMON_INTENT_METADATA)
         intent_metadata.update(bot_intent_metadata)
-        entity_handlers = copy.deepcopy(ENTITY_HANDLERS)
+        # We always add the smalltalk metadata whether it is enabled or not so the bot
+        # can recognize which intents are smalltalk even if it doesnt support them
+        if not smalltalk_metadata:
+            result = parse_metadata_file(SMALLTALK_INTENT_FILE, intent_file_schema)
+            smalltalk_metadata = result['INTENT_METADATA']
+            update_intents(smalltalk_metadata, {'is_smalltalk': True, 'is_repeatable': True, 'is_preemptive': True})
+        intent_metadata.update(smalltalk_metadata)
+
+        clear_utterances(intent_metadata)
+
+        entity_handlers = copy.deepcopy(COMMON_ENTITY_HANDLERS)
         entity_handlers.update(bot_entity_handlers)
+
         common_messages = copy.deepcopy(COMMON_MESSAGES)
         common_messages.update(bot_common_messages)
 
@@ -209,17 +189,29 @@ def load_bot_metadata_from_directory(app_config, load_tests=False):
             MAX_QUESTION_ATTEMPTS=bot_metadata.get('MAX_QUESTION_ATTEMPTS', DEFAULT_MAX_QUESTION_ATTEMPTS),
             MAX_CONSECUTIVE_MESSAGE_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_MESSAGE_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS),
             MAX_CONSECUTIVE_REPEAT_ATTEMPTS=bot_metadata.get('MAX_CONSECUTIVE_REPEAT_ATTEMPTS', DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS),
+            SMALLTALK=bot_metadata.get('SMALLTALK', False),
             NLU_CLASS=bot_metadata.get('NLU_CLASS', app_config.get('NLU_CLASS', DEFAULT_NLU_CLASS)),
             NLU_CONFIG=bot_metadata.get('NLU_CONFIG', app_config['NLU_CONFIG']),
             INTENT_METADATA=intent_metadata,
             ENTITY_HANDLERS=entity_handlers,
             COMMON_MESSAGES=common_messages,
         )
+
         if load_tests:
             BOT_METADATA[bot_name]['TESTS'] = bot_metadata.get('TESTS', {})
+
         count += 1
 
     print 'Loaded %d bot configs' % count
+
+def load_common_metadata(app_config):
+    schema = IntentFileSchema()
+    metadata = parse_metadata_file(COMMON_INTENT_FILE, schema)
+    COMMON_INTENT_METADATA.update(metadata['INTENT_METADATA'])
+
+def load_app_metadata(app_config, load_tests=False):
+    load_common_metadata(app_config)
+    load_bot_metadata(app_config, load_tests=load_tests)
 
 #-------- Schema Validation
 
@@ -243,7 +235,12 @@ def is_valid_action(val):
         return True
     raise ValidationError('Invalid action: %s' % val)
 
-class MessageSchema(Schema):
+class BaseSchema(Schema):
+    class Meta:
+        # The json module as imported from utils
+        json_module = json
+
+class MessageSchema(BaseSchema):
     prompts = fields.List(fields.Str())
     help = fields.List(fields.Str())
     why = fields.List(fields.Str())
@@ -264,7 +261,24 @@ class MessageField(fields.Field):
             raise ValidationError('Invalid Message format: %s' % value)
         super(MessageField, self)._validate(value)
 
-class SlotFollowUpSchema(Schema):
+class ResponsesSchema(BaseSchema):
+    Active = fields.List(fields.Str())
+    Deferred = fields.List(fields.Str())
+    Resumed = fields.List(fields.Str())
+
+class ResponsesField(fields.Field):
+    def _validate(self, value):
+        if type(value) == list:
+            if not all([type(x) in (str, unicode) for x in value]):
+                raise ValidationError('Invalid Responses format: %s' % value)
+        elif isinstance(value, dict):
+            schema = ResponsesSchema()
+            result = schema.load(value)
+        else:
+            raise ValidationError('Invalid Responses format: %s' % value)
+        super(ResponsesField, self)._validate(value)
+
+class SlotFollowUpSchema(BaseSchema):
     prompts = fields.List(fields.Str(), required=True)
     help = fields.List(fields.Str())
     why = fields.List(fields.Str())
@@ -273,7 +287,7 @@ class SlotFollowUpSchema(Schema):
     intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
     action = fields.Str(validate=is_valid_action)
 
-class IntentSlotSchema(Schema):
+class IntentSlotSchema(BaseSchema):
     prompts = fields.List(fields.Str())
     help = fields.List(fields.Str())
     why = fields.List(fields.Str())
@@ -281,26 +295,29 @@ class IntentSlotSchema(Schema):
     entity_handler = fields.Str()
     autofill = fields.Boolean()
 
-class IntentFulfillmentSchema(Schema):
+class IntentFulfillmentSchema(BaseSchema):
     url = fields.Url(required=True)
 
-class IntentMetadataSchema(Schema):
-    responses = fields.Dict(keys=fields.Str(validate=is_valid_response_type), values=fields.List(fields.Str()))
+class IntentMetadataSchema(BaseSchema):
+    responses = ResponsesField()
+    utterances = fields.List(fields.Str())
     slots = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentSlotSchema))
     fulfillment = fields.Nested(IntentFulfillmentSchema)
     help = fields.List(fields.Str())
     why = fields.List(fields.Str())
-    repeatable = fields.Boolean()
-    preemptive = fields.Boolean()
+    is_repeatable = fields.Boolean()
+    is_preemptive = fields.Boolean()
     is_answer = fields.Boolean()
     is_greeting = fields.Boolean()
+    is_smalltalk = fields.Boolean()
 
-class BotMetadataSchema(Schema):
+class BotMetadataSchema(BaseSchema):
     INTENT_FILTER_THRESHOLD = fields.Float(validate=is_zero_to_one)
     ENTITY_FILTER_THRESHOLD = fields.Float(validate=is_zero_to_one)
     MAX_QUESTION_ATTEMPTS = fields.Integer()
     MAX_CONSECUTIVE_MESSAGE_ATTEMPTS = fields.Integer()
     MAX_CONSECUTIVE_REPEAT_ATTEMPTS = fields.Integer()
+    SMALLTALK = fields.Boolean()
     NLU_CLASS = fields.Str()
     NLU_CONFIG = fields.Dict(keys=fields.Str(), values=fields.Str())
     COMMON_MESSAGES = fields.Dict(keys=fields.Str(), values=MessageField(), required=True)
@@ -308,3 +325,6 @@ class BotMetadataSchema(Schema):
     INTENT_METADATA = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentMetadataSchema), required=True)
     # TODO: validate the list items
     TESTS = fields.Dict(keys=fields.Str(), values=fields.List(fields.List(fields.Field(allow_none=True))))
+
+class IntentFileSchema(BaseSchema):
+    INTENT_METADATA = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentMetadataSchema), required=True)

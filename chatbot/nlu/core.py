@@ -29,5 +29,46 @@ class NLU(object):
         entities = entity_handler().process(query, entities)
         return IntentResponse(query, intents, entities=entities)
 
+    def get_application(self):
+        raise NotImplementedError
+
+    def get_applications(self):
+        # TODO: config limits context to a specific app ID and version, might need a better home
+        # or to be made a class method
+        raise NotImplementedError
+
+    def get_application_versions(self):
+        raise NotImplementedError
+
+    def clone_version(self, old_version, new_version):
+        raise NotImplementedError
+
+    def clone_current_version(self, new_version):
+        raise NotImplementedError
+
+    def train(self):
+        raise NotImplementedError
+
+    def publish(self):
+        raise NotImplementedError
+
+    def get_entity(self, id):
+        raise NotImplementedError
+
+    def get_entities(self):
+        raise NotImplementedError
+
+    def get_intent(self, id):
+        raise NotImplementedError
+
     def get_intents(self):
+        raise NotImplementedError
+
+    def add_intent(self, name, utterances):
+        raise NotImplementedError
+
+    def get_utterances(self, intent):
+        raise NotImplementedError
+
+    def add_utterance(self, intent, text):
         raise NotImplementedError

@@ -1,10 +1,12 @@
 azure-cognitiveservices-language-luis
 cachetools
+climax
 diskcache
 flask
 flask-sqlalchemy
 marshmallow>=3.0.0rc1
+mysql-python
 python-dateutil
 requests
+simplejson
 usaddress
-mysql-python

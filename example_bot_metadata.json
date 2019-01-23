@@ -18,8 +18,8 @@
             "prompts": [
                 "We are all set. Need anything else?"
             ],
-            "intent_actions": {"ConfirmYes": "NoAction",
-                               "ConfirmNo": "EndConversation"}
+            "intent_actions": {"Yes": "NoAction",
+                               "No": "EndConversation"}
         }
     },
 
@@ -47,8 +47,8 @@
             "slots": {
                 "zipcode": {"prompts": ["Can I have your zipcode?"],
                             "follow_up": {"prompts": ["I heard {zipcode}. Is that correct?"],
-                                          "intent_actions": {"ConfirmYes": "NoAction",
-                                                             "ConfirmNo": "RepeatSlot"}},
+                                          "intent_actions": {"Yes": "NoAction",
+                                                             "No": "RepeatSlot"}},
                             "entity_handler": "EntityHandler"},
                 "email": {"prompts": ["Can I have your email?"]}
             },

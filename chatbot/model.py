@@ -42,5 +42,8 @@ class Fulfillments(TimestampMixin, db.Model):
     data = db.Column(db.Text, nullable=False)
 
 if __name__ == '__main__':
-    print 'Creating database...'
-    db.create_all()
+    from chatbot import app
+    db.init_app(app)
+    with app.app_context():
+        print 'Creating database...'
+        db.create_all()

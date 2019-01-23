@@ -19,10 +19,10 @@ DEFAULT_NLU_DISK_CACHE_TTL = 3600*24
 
 class CommonIntents(object):
     Cancel = 'Cancel'
-    ConfirmYes = 'ConfirmYes'
-    ConfirmNo = 'ConfirmNo'
+    Yes = 'Yes'
+    No = 'No'
     Help = 'Help'
-    NoIntent = 'None' # TODO: for NLUs to convert intent names to canon values
+    NoIntent = 'None' # TODO: This is specific to LUIS
     Repeat = 'Repeat'
     Greeting = 'Greeting'
     Why = 'Why'
@@ -47,8 +47,8 @@ class VariableActions(object):
     RepeatSlotAndRemoveIntent = 'RepeatSlotAndRemoveIntent'
 
 DEFAULT_FOLLOW_UP_ACTIONS = {
-    CommonIntents.ConfirmYes: Actions.NoAction,
-    CommonIntents.ConfirmNo: Actions.RepeatSlot,
+    CommonIntents.Yes: Actions.NoAction,
+    CommonIntents.No: Actions.RepeatSlot,
 }
 
 def assert_valid_intent_name(metadata, intent_name):
@@ -216,26 +216,39 @@ class FollowUp(Question):
 class Intent(PrintMixin, JSONMixin):
     repr_attrs = ['name', 'score']
 
-    def __init__(self, metadata, name, score, responses=None, slots=None, repeatable=False, preemptive=False, fulfillment=None, is_answer=False, is_greeting=False, help=None, why=None):
+    def __init__(self, metadata, name, score, responses=None, slots=None, fulfillment=None, is_repeatable=False, is_preemptive=False, is_answer=False, is_greeting=False, is_smalltalk=None, help=None, why=None):
         self.name = name
         self.score = score
-        self.repeatable = repeatable
-        self.preemptive = preemptive
         self.fulfillment = fulfillment
         self.fulfillment_data = None
         self.help = help
         self.why = why
+
+        # TODO: probably a better way to capture or consolidate these concepts
+        self.is_repeatable = is_repeatable
+        self.is_preemptive = is_preemptive
         self.is_answer = is_answer
         self.is_greeting = is_greeting
+        self.is_smalltalk = is_smalltalk
         self.is_common_intent = is_common_intent(name)
-        if not self.is_common_intent:
-            assert not self.preemptive, 'Preemptive bot intents are not currently supported'
+        self.is_app_intent = not (self.is_common_intent or self.is_smalltalk)
+        if self.is_app_intent:
+            assert not self.is_preemptive, 'Preemptive bot intents are not currently supported'
+
         self.responses = {}
         if responses:
-            for response_type, response_texts in responses.items():
-                assert response_type in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred), 'Invalid response type: %s' % response_type
-                assert type(response_texts) in (tuple, list)
-                self.responses[response_type] = response_texts
+            if isinstance(responses, dict):
+                for response_type, response_texts in responses.items():
+                    assert response_type in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred), 'Invalid response type: %s' % response_type
+                    assert type(response_texts) in (tuple, list), 'Invalid response format: %s' % response_texts
+                    self.responses[response_type] = response_texts
+            else:
+                # Assume its a list of possible responses for the Active case by default
+                assert type(responses) in [list, tuple], 'Invalid response format: %s' % responses
+                self.responses[ResponseTypes.Active] = []
+                for response_text in responses:
+                    assert type(response_text) in (str, unicode), 'Invalid response text: %s' % response_text
+                    self.responses[ResponseTypes.Active].append(response_text)
 
         self.slots = MessageGroup()
         if slots:
