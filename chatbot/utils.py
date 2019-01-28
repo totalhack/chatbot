@@ -1,6 +1,11 @@
 from cachetools import TTLCache
-from collections import OrderedDict
+from collections import OrderedDict, MutableMapping
+import copy
+import datetime
+from dateutil import parser as dateparser
+from functools import wraps
 from importlib import import_module
+import inspect
 try:
     import simplejson as json
     from simplejson import JSONEncoder
@@ -22,7 +27,6 @@ from flask import Response, current_app
 #-------- Command line utils
 
 def st():
-    import inspect
     import pdb
     pdb.Pdb().set_trace(inspect.currentframe().f_back)
 
@@ -31,6 +35,11 @@ def st():
 @climax.argument('--dry_run', action='store_true')
 @climax.argument('--force', action='store_true')
 def cli():
+    pass
+
+@climax.parent()
+@climax.argument('--debug', action='store_true')
+def testcli():
     pass
 
 def prompt_user(msg, answers):
@@ -56,69 +65,36 @@ def import_object(name):
         object_name = name.split('.')[-1]
     return getattr(import_module(module_name), object_name)
 
-#-------- String utils
+# https://stackoverflow.com/questions/1389180/automatically-initialize-instance-variables
+def initializer(func):
+    names, varargs, keywords, defaults = inspect.getargspec(func)
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        for name, arg in list(zip(names[1:], args)) + list(kwargs.items()):
+            setattr(self, name, arg)
+        if defaults:
+            for i in range(len(defaults)):
+                index = -(i + 1)
+                if not hasattr(self, names[index]):
+                    setattr(self, names[index], defaults[index])
+        func(self, *args, **kwargs)
+    return wrapper
 
-def get_string_format_args(s):
-    return [tup[1] for tup in string.Formatter().parse(s) if tup[1] is not None]
+class MappingMixin(MutableMapping):
+    def __setitem__(self, key, value):
+        self.__dict__[key] = value
 
-def string_has_format_args(s):
-    if get_string_format_args(s):
-        return True
-    return False
+    def __getitem__(self, key):
+        return self.__dict__[key]
 
-#-------- Specific type utils
+    def __delitem__(self, key):
+        del self.__dict__[key]
 
-# https://stackoverflow.com/questions/7204805/dictionaries-of-dictionaries-merge
-def dictmerge(a, b, path=None, overwrite=False):
-    if path is None: path = []
-    for key in b:
-        if key in a:
-            if isinstance(a[key], dict) and isinstance(b[key], dict):
-                dictmerge(a[key], b[key], path + [str(key)], overwrite=overwrite)
-            elif a[key] == b[key]:
-                pass # same leaf value
-            else:
-                if not overwrite:
-                    raise Exception('Conflict at %s' % '.'.join(path + [str(key)]))
-                a[key] = b[key]
-        else:
-            a[key] = b[key]
-    return a
+    def __iter__(self):
+        return iter(self.__dict__)
 
-# https://stackoverflow.com/questions/16664874/how-can-i-add-an-element-at-the-top-of-an-ordereddict-in-python
-class OrderedDictPlus(OrderedDict):
-    def prepend(self, key, value, dict_setitem=dict.__setitem__):
-        root = self._OrderedDict__root
-        first = root[1]
-
-        if key in self:
-            if first[2] != key:
-                link = self._OrderedDict__map[key]
-                link_prev, link_next, _ = link
-                link_prev[1] = link_next
-                link_next[0] = link_prev
-                link[0] = root
-                link[1] = first
-                root[1] = first[0] = link
-        else:
-            root[1] = first[0] = self._OrderedDict__map[key] = [root, first, key]
-            dict_setitem(self, key, value)
-
-def _default(self, obj):
-    return getattr(obj.__class__, 'to_json', _default.default)(obj)
-
-_default.default = JSONEncoder().default
-JSONEncoder.default = _default
-
-def jsonr(obj):
-    return Response(json.dumps(obj), mimetype="application/json")
-
-class JSONMixin(object):
-    def to_json(self):
-        return self.__dict__
-
-    def to_jsons(self):
-        return json.dumps(self.__dict__)
+    def __len__(self):
+        return len(self.__dict__)
 
 #-------- Logging utils
 
@@ -200,6 +176,82 @@ class PrintMixin(object):
     def __str__(self):
         return str(vars(self))
 
+#-------- String utils
+
+def get_string_format_args(s):
+    return [tup[1] for tup in string.Formatter().parse(s) if tup[1] is not None]
+
+def string_has_format_args(s):
+    if get_string_format_args(s):
+        return True
+    return False
+
+#-------- Dict & JSON utils
+
+# https://stackoverflow.com/questions/7204805/dictionaries-of-dictionaries-merge
+def dictmerge(x, y, path=None, overwrite=False):
+    if path is None: path = []
+    for key in y:
+        if key in x:
+            if (isinstance(x[key], dict) or isinstance(x[key], MutableMapping)) and (isinstance(y[key], dict) or isinstance(y[key], MutableMapping)):
+                dictmerge(x[key], y[key], path + [str(key)], overwrite=overwrite)
+            elif x[key] == y[key]:
+                pass # same leaf value
+            else:
+                if not overwrite:
+                    raise Exception('Conflict at %s' % '.'.join(path + [str(key)]))
+                x[key] = y[key]
+        else:
+            x[key] = y[key]
+    return x
+
+# https://stackoverflow.com/questions/16664874/how-can-i-add-an-element-at-the-top-of-an-ordereddict-in-python
+class OrderedDictPlus(OrderedDict):
+    def prepend(self, key, value, dict_setitem=dict.__setitem__):
+        root = self._OrderedDict__root
+        first = root[1]
+
+        if key in self:
+            if first[2] != key:
+                link = self._OrderedDict__map[key]
+                link_prev, link_next, _ = link
+                link_prev[1] = link_next
+                link_next[0] = link_prev
+                link[0] = root
+                link[1] = first
+                root[1] = first[0] = link
+        else:
+            root[1] = first[0] = self._OrderedDict__map[key] = [root, first, key]
+            dict_setitem(self, key, value)
+
+def _default(self, obj):
+    return getattr(obj.__class__, 'to_json', _default.default)(obj)
+
+_default.default = JSONEncoder().default
+JSONEncoder.default = _default
+
+def jsonr(obj):
+    return Response(json.dumps(obj), mimetype="application/json")
+
+class JSONMixin(object):
+    # Probably needs a better home
+    def to_dict(self):
+        if isinstance(self, dict):
+            result = self
+        else:
+            result = self.__dict__.copy()
+        for k, v in result.iteritems():
+            if hasattr(v, 'to_dict'):
+                result[k] = v.to_dict()
+        return result
+
+    # This is used for _defaults in JSON encoding
+    def to_json(self):
+        return self.__dict__
+
+    def to_jsons(self):
+        return json.dumps(self.__dict__)
+
 #--------  Callable utils
 
 def poll_call(func, result_param, result_value, sleep_time, max_iter, *_args, **_kwargs):
@@ -250,3 +302,8 @@ def paged_get(url, size_param, offset_param, page_size, *_args, **_kwargs):
 
     print 'Got %d results' % offset
     return results
+
+#-------- Date utils
+
+def parse_date(s):
+    return dateparser.parse(s)

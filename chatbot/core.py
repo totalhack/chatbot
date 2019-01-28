@@ -51,8 +51,8 @@ DEFAULT_FOLLOW_UP_ACTIONS = {
     CommonIntents.No: Actions.RepeatSlot,
 }
 
-def assert_valid_intent_name(metadata, intent_name):
-    assert intent_name in metadata['INTENT_METADATA'], 'Invalid intent name: %s' % intent_name
+def assert_valid_intent_name(bot_config, intent_name):
+    assert intent_name in bot_config.intent_configs, 'Invalid intent name: %s' % intent_name
 
 def is_common_intent(val):
     types = get_class_vars(CommonIntents)
@@ -63,15 +63,16 @@ def is_common_intent(val):
 def get_entity_handler(name):
     return import_object(name)
 
-def get_nlu(name):
-    return import_object(name)
+def get_nlu(bot_config):
+    nlu_class = import_object(bot_config.nlu_class)
+    return nlu_class(bot_config.nlu_config)
 
-class Message(PrintMixin, JSONMixin):
+class Message(PrintMixin, JSONMixin, MappingMixin):
     repr_attrs = ['name']
 
+    @initializer
     def __init__(self, name, prompts):
-        self.name = name
-        self.prompts = prompts
+        pass
 
     def get_prompt(self):
         prompt = random.choice(self.prompts)
@@ -138,19 +139,21 @@ class Question(Message):
         return why
 
 class Slot(Question):
-    repr_attrs = ['name', 'value']
+    repr_attrs = ['name']
 
     @classmethod
-    def from_dict(cls, metadata, slot_name, slot_info):
+    def from_dict(cls, slot_name, slot_info, entity_handlers=None):
         assert isinstance(slot_info, dict), 'Invalid type for slot_info, must be dict: %s' % type(slot_info)
         prompts = slot_info['prompts']
 
         follow_up_info = slot_info.get('follow_up', {})
+        if not follow_up_info:
+            follow_up_info = {}
         follow_up = FollowUp.from_dict(slot_name, follow_up_info)
 
         entity_handler_name = slot_info.get('entity_handler', None)
-        if (not entity_handler_name) and slot_name in metadata['ENTITY_HANDLERS']:
-            entity_handler_name = metadata['ENTITY_HANDLERS'][slot_name]
+        if (not entity_handler_name) and slot_name in entity_handlers:
+            entity_handler_name = entity_handlers[slot_name]
 
         autofill = slot_info.get('autofill', None)
         help = slot_info.get('help', None)
@@ -169,7 +172,6 @@ class Slot(Question):
         if follow_up:
             assert type(follow_up) == FollowUp
         self.autofill = autofill
-        self.value = None
 
     def get_follow_up_prompt(self):
         if not self.follow_up:
@@ -189,11 +191,23 @@ class Slot(Question):
                         autofill=self.autofill,
                         help=self.help,
                         why=self.why)
-        if isinstance(self.value, Entity):
-            new_slot.value = self.value.copy()
-        else:
-            new_slot.value = copy.deepcopy(self.value)
         return new_slot
+
+class SlotResults(OrderedDictPlus, JSONMixin):
+    pass
+
+class SlotResult(JSONMixin, MappingMixin):
+    @initializer
+    def __init__(self, name, value):
+        pass
+
+    def copy(self):
+        new = SlotResult(self.name, None)
+        if isinstance(self.value, EntityResult):
+            new.value = self.value.copy()
+        else:
+            new.value = copy.deepcopy(self.value)
+        return new
 
 class FollowUp(Question):
     repr_attrs = ['name']
@@ -213,32 +227,20 @@ class FollowUp(Question):
                             why=follow_up_info.get('why', None))
         return follow_up
 
-class Intent(PrintMixin, JSONMixin):
-    repr_attrs = ['name', 'score']
+class Intent(PrintMixin, JSONMixin, MappingMixin):
+    repr_attrs = ['name']
 
-    def __init__(self, metadata, name, score, responses=None, slots=None, fulfillment=None, is_repeatable=False, is_preemptive=False, is_answer=False, is_greeting=False, is_smalltalk=None, help=None, why=None):
-        self.name = name
-        self.score = score
-        self.fulfillment = fulfillment
-        self.fulfillment_data = None
-        self.help = help
-        self.why = why
-
-        # TODO: probably a better way to capture or consolidate these concepts
-        self.is_repeatable = is_repeatable
-        self.is_preemptive = is_preemptive
-        self.is_answer = is_answer
-        self.is_greeting = is_greeting
-        self.is_smalltalk = is_smalltalk
-        self.is_common_intent = is_common_intent(name)
-        self.is_app_intent = not (self.is_common_intent or self.is_smalltalk)
+    @initializer
+    def __init__(self, name, responses=None, slots=None, entity_handlers=None, fulfillment=None,
+                 is_repeatable=False, is_preemptive=False, is_answer=False, is_greeting=False, is_smalltalk=None,
+                 help=None, why=None, api_id=None):
         if self.is_app_intent:
             assert not self.is_preemptive, 'Preemptive bot intents are not currently supported'
 
         self.responses = {}
         if responses:
             if isinstance(responses, dict):
-                for response_type, response_texts in responses.items():
+                for response_type, response_texts in responses.iteritems():
                     assert response_type in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred), 'Invalid response type: %s' % response_type
                     assert type(response_texts) in (tuple, list), 'Invalid response format: %s' % response_texts
                     self.responses[response_type] = response_texts
@@ -252,17 +254,28 @@ class Intent(PrintMixin, JSONMixin):
 
         self.slots = MessageGroup()
         if slots:
-            for slot_name, slot_info in slots.items():
-                self.slots[slot_name] = Slot.from_dict(metadata, slot_name, slot_info)
+            for slot_name, slot_info in slots.iteritems():
+                self.slots[slot_name] = Slot.from_dict(slot_name, slot_info, entity_handlers=entity_handlers)
 
-    def get_remaining_intent_slots(self):
-        return MessageGroup([(k, v) for k,v in self.slots.items() if v.value is None])
+    @property
+    def is_app_intent(self):
+        return not (self.is_common_intent or self.is_smalltalk)
 
-    def get_completed_intent_slots(self):
-        return MessageGroup([(k, v) for k,v in self.slots.items() if v.value is not None])
+    @property
+    def is_common_intent(self):
+        return is_common_intent(self.name)
+
+    def get_slot_results_container(self):
+        '''Creates a container to store slot results'''
+        results = SlotResults()
+        for slot_name, slot in self.slots.iteritems():
+            results[slot_name] = SlotResult(slot_name, None)
+        return results
 
     def get_fulfillment_data(self, convo, tx, slot_data):
-        slot_value_data = {k:slot_data[k].value.value for k in self.slots}
+        if not self.fulfillment:
+            return {}
+        slot_value_data = {k:slot_data[k].value for k in self.slots}
         return dict(conversation_id=convo.id,
                     transaction_id=tx.id,
                     intent_name=self.name,
@@ -270,12 +283,6 @@ class Intent(PrintMixin, JSONMixin):
                     slot_data=slot_value_data)
 
     def fulfill(self, convo, tx, slot_data):
-        # Set the fulfillment data on this even if there is no fulfillment URL
-        # to call, so clients can still have a clean way of getting all slot
-        # data for a particular intent.
-        fulfillment_data = self.get_fulfillment_data(convo, tx, slot_data)
-        self.fulfillment_data = fulfillment_data
-
         if not self.fulfillment:
             dbg('Nothing to fulfill for intent %s' % self.name)
             return
@@ -284,6 +291,8 @@ class Intent(PrintMixin, JSONMixin):
         url = self.fulfillment['url']
         headers = {'Content-type': 'application/json'}
         status_code = None
+
+        fulfillment_data = self.get_fulfillment_data(convo, tx, slot_data)
 
         try:
             resp = requests.post(url, json=fulfillment_data)
@@ -315,51 +324,59 @@ class Intent(PrintMixin, JSONMixin):
         why = random.choice(self.why)
         return why
 
-class Entity(PrintMixin, JSONMixin):
-    repr_attrs = ['name', 'type', 'value', 'score']
+class IntentResult(PrintMixin, JSONMixin, MappingMixin):
+    repr_attrs = ['name', 'score']
 
+    @initializer
+    def __init__(self, name, score):
+        pass
+
+class Entity(PrintMixin, MappingMixin):
+    repr_attrs = ['name', 'type']
+
+    @initializer
+    def __init__(self, name, type, api_id=None):
+        pass
+
+class EntityResult(PrintMixin, JSONMixin, MappingMixin):
+    repr_attrs = ['name', 'slot_name', 'type', 'value', 'score']
+
+    @initializer
     def __init__(self, name, type, start_index=None, end_index=None, score=None, value=None, from_context=False):
-        self.name = name
-        self.type = type
         self.slot_name = type
-        self.start_index = start_index
-        self.end_index = end_index
-        self.score = score
-        self.value = value
-        self.from_context = from_context
 
     def copy(self):
-        new_entity = Entity(self.name,
-                            self.type,
-                            start_index=self.start_index,
-                            end_index=self.end_index,
-                            score=self.score,
-                            value=copy.deepcopy(self.value),
-                            from_context=self.from_context)
+        new_entity = EntityResult(self.name,
+                                  self.type,
+                                  start_index=self.start_index,
+                                  end_index=self.end_index,
+                                  score=self.score,
+                                  value=copy.deepcopy(self.value),
+                                  from_context=self.from_context)
         return new_entity
 
 class EntityHandler(JSONMixin):
     def process(self, query, nlu_entities):
         entities = []
         for entity in nlu_entities:
-            entities.append(Entity(name=entity['entity'],
-                                   type=entity['type'],
-                                   start_index=entity.get('startIndex', None),
-                                   end_index=entity.get('endIndex', None),
-                                   score=entity.get('score', None),
-                                   value=entity.get('value', None)))
+            entities.append(EntityResult(name=entity['entity'],
+                                         type=entity['type'],
+                                         start_index=entity.get('startIndex', None),
+                                         end_index=entity.get('endIndex', None),
+                                         score=entity.get('score', None),
+                                         value=entity.get('value', None)))
         return entities
 
 class QueryEntityHandler(EntityHandler):
     '''Just echoes the query back as an entity'''
     def process(self, query, nlu_entities):
         entities = super(QueryEntityHandler, self).process(query, nlu_entities)
-        query_entity = Entity(name='query',
-                              type='query',
-                              start_index=None,
-                              end_index=None,
-                              score=None,
-                              value=query)
+        query_entity = EntityResult(name='query',
+                                    type='query',
+                                    start_index=None,
+                                    end_index=None,
+                                    score=None,
+                                    value=query)
         entities.insert(0, query_entity)
         return entities
 
@@ -384,7 +401,7 @@ class AddressEntityHandler(EntityHandler):
         }
 
         street_address_parts = []
-        for label, value in address_dict.items():
+        for label, value in address_dict.iteritems():
             if label in ['Recipient', 'NotAddress']:
                 continue
             if label in ['AddressNumber', 'StreetName', 'StreetNamePostType']:
@@ -393,30 +410,30 @@ class AddressEntityHandler(EntityHandler):
             address_parts.append(value)
             if label in address_part_map:
                 address_part_name = address_part_map[label]
-                entity = Entity(name=address_part_name,
-                                type=address_part_name,
-                                start_index=None,
-                                end_index=None,
-                                score=None,
-                                value=value)
+                entity = EntityResult(name=address_part_name,
+                                      type=address_part_name,
+                                      start_index=None,
+                                      end_index=None,
+                                      score=None,
+                                      value=value)
                 address_entities.append(entity)
 
         address_value = ' '.join(address_parts)
-        address_entity = Entity(name='address',
-                                type='address',
-                                start_index=None,
-                                end_index=None,
-                                score=None,
-                                value=address_value)
+        address_entity = EntityResult(name='address',
+                                      type='address',
+                                      start_index=None,
+                                      end_index=None,
+                                      score=None,
+                                      value=address_value)
         entities.insert(0, address_entity)
 
         street_address_value = ' '.join(street_address_parts)
-        street_address_entity = Entity(name='street_address',
-                                       type='street_address',
-                                       start_index=None,
-                                       end_index=None,
-                                       score=None,
-                                       value=street_address_value)
+        street_address_entity = EntityResult(name='street_address',
+                                             type='street_address',
+                                             start_index=None,
+                                             end_index=None,
+                                             score=None,
+                                             value=street_address_value)
         entities.insert(1, street_address_entity)
 
         for entity in address_entities:
@@ -424,17 +441,12 @@ class AddressEntityHandler(EntityHandler):
 
         return entities
 
-class FulfillmentResponse(PrintMixin, JSONMixin):
+class FulfillmentResponse(PrintMixin, JSONMixin, MappingMixin):
     repr_attrs = ['status', 'response']
 
+    @initializer
     def __init__(self, name, status=None, status_reason=None, message=None, action=None):
-        self.name = name
         assert status and type(status) in (str, unicode), 'Invalid status: %s' % status
-        self.status = status
-        self.status_reason = status_reason
-        self.action = action
-        self.raw_message = message
-        self.message = message
         if message:
             if type(message) in (str, unicode):
                 self.message = Message(name, [message])
@@ -449,42 +461,167 @@ class FulfillmentResponse(PrintMixin, JSONMixin):
             return True
         return False
 
-class IntentResponse(PrintMixin, JSONMixin):
-    repr_attrs = ['query', 'intents', 'entities']
+class IntentPrediction(PrintMixin, JSONMixin, MappingMixin):
+    repr_attrs = ['query', 'intent_results', 'entity_results']
 
-    def __init__(self, query, intents, entities=None):
+    def __init__(self, query, intent_results, entity_results=None):
         self.query = query
-        assert intents
-        self.intents = sorted(intents, key=lambda x: x.score, reverse=True)
-        self.top_intent = self.intents[0]
-        self.entities = entities or []
+        assert intent_results
+        self.intent_results = sorted(intent_results, key=lambda x: x.score, reverse=True)
+        self.top_intent_result = self.intent_results[0]
+        self.entity_results = entity_results or []
 
-    def filter_intents(self, score):
-        return [x for x in self.intents if ((x.score is None or x.score > score) and x.name != 'None')]
+    def filter_intent_results(self, score):
+        return [x for x in self.intent_results if ((x.score is None or x.score > score) and x.name != 'None')]
 
-    def filter_entities(self, score):
-        return [x for x in self.entities if (x.score is None or x.score > score)]
+    def filter_entity_results(self, score):
+        return [x for x in self.entity_results if (x.score is None or x.score > score)]
 
-    def add_entities_from_context(self, context):
-        for k,v in context.items():
-            self.entities.append(Entity(name=k, type=k, value=v, from_context=True))
+    def add_entity_results_from_context(self, context):
+        for k,v in context.iteritems():
+            self.entity_results.append(EntityResult(name=k, type=k, value=v, from_context=True))
 
     def get_valid(self, intent_threshold=0, entity_threshold=0):
-        valid_intents = self.filter_intents(intent_threshold)
-        valid_entities = self.filter_entities(entity_threshold)
-        return valid_intents, valid_entities
+        valid_intent_results = self.filter_intent_results(intent_threshold)
+        valid_entity_results = self.filter_entity_results(entity_threshold)
+        return valid_intent_results, valid_entity_results
 
-def get_triggered_intent(metadata, intent_name):
-    assert_valid_intent_name(metadata, intent_name)
-    meta = metadata['INTENT_METADATA'][intent_name]
+def get_triggered_intent_result(bot_config, intent_name):
+    assert_valid_intent_name(bot_config, intent_name)
     score = 1
-    intent = Intent(metadata, intent_name, score, **meta)
-    return intent
+    intent_result = IntentResult(intent_name, score)
+    return intent_result
 
-class TriggeredIntentResponse(IntentResponse):
-    def __init__(self, metadata, intent_name):
-        intents = [get_triggered_intent(metadata, intent_name)]
-        super(TriggeredIntentResponse, self).__init__(None, intents)
+class TriggeredIntentPrediction(IntentPrediction):
+    def __init__(self, bot_config, intent_name):
+        intents = [get_triggered_intent_result(bot_config, intent_name)]
+        super(TriggeredIntentPrediction, self).__init__(None, intents)
+
+class Application(PrintMixin, MappingMixin):
+    repr_attrs = ['id', 'name', 'version']
+
+    @initializer
+    def __init__(self, id, name, version, description=None, created_at=None, production_endpoint=None, staging_endpoint=None):
+        if created_at:
+            assert isinstance(created_at, datetime.date), 'Invalid created_at date object: %s' % created_at
+
+class ApplicationVersion(PrintMixin, MappingMixin):
+    repr_attrs = ['version', 'created_at', 'updated_at']
+
+    @initializer
+    def __init__(self, version, created_at=None, updated_at=None):
+        if created_at:
+            assert isinstance(created_at, datetime.date), 'Invalid created_at date object: %s' % created_at
+        if updated_at:
+            assert isinstance(updated_at, datetime.date), 'Invalid updated_at date object: %s' % updated_at
+
+class ApplicationTrainingStatus(PrintMixin, MappingMixin):
+    repr_attrs = ['status', 'model_count', 'models_trained']
+
+    TRAINED = 'Trained'
+    IN_PROGRESS = 'In Progress'
+
+    @initializer
+    def __init__(self, status, model_count, models_trained):
+        pass
+
+class ApplicationTrainingResult(ApplicationTrainingStatus):
+    repr_attrs = ['status']
+
+    @initializer
+    def __init__(self, status):
+        pass
+
+class ApplicationPublishResult(PrintMixin, MappingMixin):
+    repr_attrs = ['version', 'environment', 'published_at']
+
+    STAGING = 'Staging'
+    PRODUCTION = 'Production'
+
+    @initializer
+    def __init__(self, version, environment, region=None, published_at=None, endpoint=None):
+        pass
+
+class Utterance(PrintMixin, MappingMixin):
+    repr_attrs = ['name', 'intent_name']
+
+    @initializer
+    def __init__(self, name, intent_name=None, intent_api_id=None, api_id=None):
+        pass
+
+class NLU(object):
+    @initializer
+    def __init__(self, config):
+        pass
+
+    def get_raw_prediction(self, query):
+        raise NotImplementedError
+
+    def get_intent_results_from_raw_response(self, raw):
+        raise NotImplementedError
+
+    def get_entity_results_from_raw_response(self, raw):
+        raise NotImplementedError
+
+    def process_query(self, query, last_tx=None):
+        raw = self.get_raw_prediction(query)
+        intent_results = self.get_intent_results_from_raw_response(raw)
+        entity_results = self.get_entity_results_from_raw_response(raw)
+
+        entity_handler_name = 'EntityHandler'
+        if last_tx and last_tx.question and getattr(last_tx.question, 'entity_handler_name', None):
+            entity_handler_name = last_tx.question.entity_handler_name or entity_handler_name
+        entity_handler = get_entity_handler(entity_handler_name)
+
+        entity_results = entity_handler().process(query, entity_results)
+        return IntentPrediction(query, intent_results, entity_results=entity_results)
+
+    def get_application(self):
+        raise NotImplementedError
+
+    def get_applications(self):
+        # TODO: config limits context to a specific app ID and version, might need a better home
+        # or to be made a class method
+        raise NotImplementedError
+
+    def get_application_versions(self):
+        raise NotImplementedError
+
+    def clone_version(self, old_version, new_version):
+        raise NotImplementedError
+
+    def clone_current_version(self, new_version):
+        raise NotImplementedError
+
+    def get_application_training_status(self):
+        raise NotImplementedError
+
+    def train(self):
+        raise NotImplementedError
+
+    def publish(self):
+        raise NotImplementedError
+
+    def get_entity(self, id):
+        raise NotImplementedError
+
+    def get_entities(self):
+        raise NotImplementedError
+
+    def get_intent(self, id):
+        raise NotImplementedError
+
+    def get_intents(self):
+        raise NotImplementedError
+
+    def add_intent(self, name, utterances):
+        raise NotImplementedError
+
+    def get_utterances(self, intent):
+        raise NotImplementedError
+
+    def add_utterance(self, intent, text):
+        raise NotImplementedError
 
 #---- Cache Stuff
 

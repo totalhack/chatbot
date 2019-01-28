@@ -1,0 +1,21 @@
+import unittest
+
+from chatbot.utils import *
+
+class TestBase(unittest.TestCase):
+    DEBUG = False
+
+    def run(self, result=None):
+        if self.DEBUG and (result.failures or result.errors):
+            st()
+        super(TestBase, self).run(result)
+
+def run_tests(testclass, testnames, debug=False):
+    testclass.DEBUG = debug
+    if testnames:
+        suite = unittest.TestSuite()
+        for testname in testnames:
+            suite.addTest(testclass(testname))
+    else:
+        suite = unittest.TestLoader().loadTestsFromTestCase(testclass)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)

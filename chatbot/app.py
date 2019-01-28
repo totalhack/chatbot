@@ -6,18 +6,14 @@ import requests
 import traceback
 
 from chatbot import app
+from chatbot.configs import *
 from chatbot.conversation import *
 from chatbot.core import *
-from chatbot.metadata import *
 from chatbot.utils import *
 
 db.init_app(app)
-load_app_metadata(app.config)
+load_bot_configs(app.config)
 setup_caching(app.config)
-
-@app.route('/')
-def home():
-    return render_template('home.html', conversation_id=request.values.get('id', None))
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -25,7 +21,9 @@ def chat():
     try:
         input = json.loads(request.values['input'])
         bot = request.values['bot']
-        metadata = json.loads(request.values.get('metadata', '{}'))
+        bot_config = None
+        if app.config['DEBUG']:
+            bot_config = json.loads(request.values.get('bot_config', '{}'))
         convo_id = request.values.get('conversation_id', None)
         dbg('Conversation ID: %s / Bot: %s' % (convo_id, bot))
         dbg('Input: %s' % input)
@@ -42,7 +40,7 @@ def chat():
                 return jsonr(response)
         else:
             dbg('Creating new conversation')
-            convo = Conversation(bot, metadata=metadata)
+            convo = Conversation(bot, bot_config=bot_config)
             convo_id = convo.id
             convo.save()
 
@@ -59,9 +57,9 @@ def chat():
                     'response': reply,
                     'conversation_id': convo_id,
                     'transaction_id': tx.id,
-                    'completed_intent': tx.completed_intent,
+                    'completed_intent_name': tx.completed_intent_name,
                     'completed_conversation': convo.completed,
-                    'fulfillment_data': tx.completed_intent.fulfillment_data if tx.completed_intent else None}
+                    'fulfillment_data': convo.get_fulfillment_data(tx, tx.completed_intent_name) if tx.completed_intent_name else None}
         if debug:
             response['transaction'] = tx
         return jsonr(response)
@@ -97,8 +95,8 @@ def fulfillment_with_question():
     response = {'status': 'success',
                 'message': {'type': 'question',
                             'prompts': ['I couldnt find anyone to help. Would you like to try MyIntent instead?'],
-                            'intent_actions': {CommonIntents.ConfirmYes: 'TriggerMyIntent',
-                                               CommonIntents.ConfirmNo: Actions.EndConversation}}}
+                            'intent_actions': {CommonIntents.Yes: 'TriggerMyIntent',
+                                               CommonIntents.No: Actions.EndConversation}}}
     return jsonr(response)
 
 @app.route('/fulfillment_with_action', methods=['POST'])

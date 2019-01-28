@@ -1,24 +1,23 @@
 #!/usr/bin/env python
 
 from chatbot import app
-from chatbot.metadata import *
+from chatbot.configs import *
 from chatbot.utils import *
 
-load_bot_metadata(app.config)
+load_bot_configs(app.config)
 
 @climax.command(parents=[cli])
-@climax.argument('version', type=str, help='Bot version to load change sto')
+@climax.argument('version', type=str, help='Bot version to load changes to')
 @climax.argument('bot', type=str, help='Name of bot to load to')
 @climax.argument('f', type=str, help='JSON file to parse for intents')
 @climax.argument('--train', action='store_true', help='Perform model training', default=False)
 @climax.argument('--publish', action='store_true', help='Publish model after training', default=False)
 def main(f, bot, version, train, publish, dry_run, force):
-    schema = IntentFileSchema()
-    metadata = parse_metadata_file(f, schema)
+    schema = IntentConfigFileSchema()
+    intent_configs = parse_schema_file(f, schema)
 
-    bot_metadata = get_bot_metadata(bot)
-    nlu_class = bot_metadata['NLU_CLASS']
-    nlu = get_nlu(nlu_class)(bot_metadata['NLU_CONFIG'])
+    bot_config = get_bot_config(bot)
+    nlu = get_nlu(bot_config)
 
     versions = {x['version']:x for x in nlu.get_application_versions()}
 
@@ -40,15 +39,18 @@ def main(f, bot, version, train, publish, dry_run, force):
 
     current_intents = {x['name']:x for x in nlu.get_intents(app_version=version)}
 
-    for intent_name, intent_data in metadata['INTENT_METADATA'].items():
+    for intent_name, intent_data in bot_config.intent_configs.iteritems():
         dbg('---- Processing intent "%s"' % intent_name)
+
         intent = current_intents.get(intent_name, None)
         if not intent:
             intent = nlu.add_intent(intent_name, app_version=version)
-        current_utterances = {x['text'].lower():x for x in nlu.get_utterances(intent, app_version=version)}
-        for utterance in intent_data.get('utterances', []):
-            if utterance.lower() not in current_utterances:
-                nlu.add_utterance(intent, utterance, app_version=version)
+
+        if intent_data.utterances:
+            current_utterances = {x['text'].lower():x for x in nlu.get_utterances(intent, app_version=version)}
+            for utterance in intent_data.utterances:
+                if utterance.lower() not in current_utterances:
+                    nlu.add_utterance(intent, utterance, app_version=version)
 
     if train or publish:
         nlu.train(app_version=version)

@@ -1,9 +1,8 @@
 from chatbot import app
+from chatbot.configs import *
 from chatbot.core import *
-from chatbot.metadata import *
 
-load_bot_metadata(app.config, load_tests=True)
-assert BOT_METADATA
+load_bot_configs(app.config, load_tests=True)
 
 nlu_cache = get_nlu_cache(app.config)
 if isinstance(nlu_cache, DiskCache):

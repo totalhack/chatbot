@@ -1,5 +1,5 @@
 {
-    "INTENT_METADATA": {
+    "intent_configs": {
         "Cancel": {
             "is_repeatable": true,
             "is_preemptive": true,
@@ -173,7 +173,6 @@
                 "I guess",
                 "correct",
                 "yeah sure",
-                "why not",
                 "please do",
                 "sure is",
                 "I agree",
@@ -195,7 +194,6 @@
                 "yes sure",
                 "obviously",
                 "k",
-                "sure why not",
                 "yeah right",
                 "yeah of course",
                 "absolutely",
@@ -222,7 +220,6 @@
                 "yap",
                 "yes you may",
                 "confirmed",
-                "of course why not",
                 "yes that's fine",
                 "affirmative",
                 "yeah go ahead",

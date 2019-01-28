@@ -1,19 +1,21 @@
 {
-    "INTENT_FILTER_THRESHOLD": 0.50,
-    "ENTITY_FILTER_THRESHOLD": 0.50,
-    "MAX_QUESTION_ATTEMPTS": 2,
-    "MAX_CONSECUTIVE_MESSAGE_ATTEMPTS": 2,
-    "MAX_CONSECUTIVE_REPEAT_ATTEMPTS": 2,
+    "intent_filter_threshold": 0.50,
+    "entity_filter_threshold": 0.50,
+    "max_question_attempts": 2,
+    "max_consecutive_message_attempts": 2,
+    "max_consecutive_repeat_attempts": 2,
 
-    "NLU_CLASS": "chatbot.nlu.luis.LUISNLU",
-    "NLU_CONFIG": {
-        "LUIS_BASE_URL": "https://westus.api.cognitive.microsoft.com",
-        "LUIS_APP_ID": "<my luis app id>",
-        "LUIS_APP_VERSION": "<my luis app version>",
-        "LUIS_SUBKEY": "<my luis subkey>"
+    "smalltalk": false,
+
+    "nlu_class": "chatbot.nlu.luis.LUISNLU",
+    "nlu_config": {
+        "luis_base_url": "https://westus.api.cognitive.microsoft.com",
+        "luis_app_id": "<my luis app id>",
+        "luis_app_version": "<my luis app version>",
+        "luis_subkey": "<my luis subkey>"
     },
 
-    "COMMON_MESSAGES": {
+    "common_messages": {
         "intents_complete": {
             "prompts": [
                 "We are all set. Need anything else?"
@@ -23,11 +25,11 @@
         }
     },
 
-    "ENTITY_HANDLERS": {
+    "entity_handlers": {
         "query": "QueryEntityHandler"
     },
 
-    "INTENT_METADATA": {
+    "intent_configs ": {
         "IntentXYZ": {
             "help": ["This is the intent level help"],
             "why": ["This is the intent level why"],
@@ -59,7 +61,7 @@
         }
     },
     
-    "TESTS": {
+    "tests": {
         "IntentXYZ": [
             ["Hi", "Welcome"],
             ["I would like XYZ", "IntentXYZ"],

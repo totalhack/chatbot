@@ -1,5 +1,5 @@
 {
-    "INTENT_METADATA": {
+    "intent_configs": {
         "smalltalk.agent.acquaintance": {
             "responses": [
                 "I am a chatbot and I love to help."
