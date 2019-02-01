@@ -1,7 +1,7 @@
 from collections import OrderedDict
 import copy
 import glob
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 from marshmallow import Schema, fields, ValidationError
 
@@ -102,9 +102,9 @@ def parse_schema_file(filename, schema):
     try:
         result = schema.loads(raw) # This does the schema check, but has a bug in object_pairs_hook so order is not preserved
         result = json.loads(raw, object_pairs_hook=OrderedDict)
-    except ValidationError, e:
+    except ValidationError as e:
         error('Schema Validation Error')
-        print json.dumps(e.message, indent=2)
+        print(json.dumps(e.message, indent=2))
         raise
     return result
 
@@ -116,26 +116,26 @@ def get_bot_config(bot):
 
 def check_bot_intent_configs(bot_intent_configs):
     # Additional checks to enforce supported behavior
-    for intent_name, intent_config in bot_intent_configs.iteritems():
-        assert not intent_config.has_key('is_preemptive'), 'Preemptive bot intents are not currently supported: %s' % intent_name
+    for intent_name, intent_config in bot_intent_configs.items():
+        assert 'is_preemptive' not in intent_config, 'Preemptive bot intents are not currently supported: %s' % intent_name
 
 def convert_to_intent_objects(intent_configs, entity_handlers):
-    for name, intent_config in intent_configs.iteritems():
+    for name, intent_config in intent_configs.items():
         kwargs = copy.deepcopy(intent_config)
         kwargs['entity_handlers'] = kwargs.get('entity_handlers', entity_handlers)
-        if kwargs.has_key('name'):
+        if 'name' in kwargs:
             del kwargs['name']
         intent = Intent(name, **kwargs)
         intent_configs[name] = intent
 
 def clear_utterances(intent_configs):
     # When loading bot configs for conversation flow we dont need this information
-    for intent_name, intent_config in intent_configs.iteritems():
-        if intent_config.has_key('utterances'):
+    for intent_name, intent_config in intent_configs.items():
+        if 'utterances' in intent_config:
             del intent_config['utterances']
 
 def update_intents(intent_configs, update_dict):
-    for intent_name, intent_config in intent_configs.iteritems():
+    for intent_name, intent_config in intent_configs.items():
         intent_config.update(copy.deepcopy(update_dict))
 
 class BotConfig(JSONMixin, MappingMixin):
@@ -157,7 +157,7 @@ class BotConfig(JSONMixin, MappingMixin):
         # in the result. As a workaround, since this is currently really only used in
         # testing, ensure intent objects are properly formed by forcing to json
         # and then rebuilding each intent_config object.
-        for intent_name, intent_config in result.intent_configs.iteritems():
+        for intent_name, intent_config in result.intent_configs.items():
             result.intent_configs[intent_name] = intent_config.to_dict()
         convert_to_intent_objects(result.intent_configs, result.entity_handlers)
         return result
@@ -176,9 +176,9 @@ class BotConfigLoader(JSONMixin):
             assert False, 'Must specify BOT_CONFIG_DIRECTORY in main config'
 
         if self.app_config['DEBUG'] and self.app_config.get('test_base_url', None):
-            print 'Overriding fulfillment base URLs with TEST_BASE_URL: %s' % self.app_config['TEST_BASE_URL']
-            for bot, bot_config in self.configs.iteritems():
-                for intent_name, intent in bot_config.intent_configs.iteritems():
+            print('Overriding fulfillment base URLs with TEST_BASE_URL: %s' % self.app_config['TEST_BASE_URL'])
+            for bot, bot_config in self.configs.items():
+                for intent_name, intent in bot_config.intent_configs.items():
                     if intent.fulfillment and intent.fulfillment.get('url', None):
                         parsed = urlparse(intent.fulfillment['url'])
                         url = self.app_config['TEST_BASE_URL'] + parsed.path
@@ -294,7 +294,7 @@ class MessageSchema(BaseSchema):
 class MessageField(fields.Field):
     def _validate(self, value):
         if type(value) == list:
-            if not all([type(x) in (str, unicode) for x in value]):
+            if not all([type(x) in (str, str) for x in value]):
                 raise ValidationError('Invalid Message format: %s' % value)
         elif isinstance(value, dict):
             schema = MessageSchema()
@@ -311,7 +311,7 @@ class ResponsesSchema(BaseSchema):
 class ResponsesField(fields.Field):
     def _validate(self, value):
         if type(value) == list:
-            if not all([type(x) in (str, unicode) for x in value]):
+            if not all([type(x) in (str, str) for x in value]):
                 raise ValidationError('Invalid Responses format: %s' % value)
         elif isinstance(value, dict):
             schema = ResponsesSchema()

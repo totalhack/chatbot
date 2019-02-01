@@ -7,6 +7,10 @@ class TestBase(unittest.TestCase):
 
     def run(self, result=None):
         if self.DEBUG and (result.failures or result.errors):
+            if result.failures:
+                dbg(result.failures)
+            if result.errors:
+                dbg(result.errors)
             st()
         super(TestBase, self).run(result)
 

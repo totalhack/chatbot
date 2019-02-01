@@ -1,6 +1,6 @@
 PACKAGE := chatbot
 ENV := /usr
-PIP := $(ENV)/local/bin/pip
+PIP := $(ENV)/bin/pip
 SETUP := $(ENV)/bin/python setup.py
 VERSION := $(shell echo `date +%Y%m%d%H%M%S`)
 
@@ -12,7 +12,7 @@ develop:
 
 install:
 	$(SETUP) bdist_wheel egg_info --tag-build '.$(VERSION)'
-	$(PIP) install dist/$(PACKAGE)-0.0.$(VERSION)-py2-none-any.whl
+	$(PIP) install dist/$(PACKAGE)-0.0.$(VERSION)-py3-none-any.whl
 
 uninstall:
 	if ($(PIP) freeze 2>&1 | grep $(PACKAGE)); \

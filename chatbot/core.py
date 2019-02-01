@@ -80,7 +80,7 @@ class Message(PrintMixin, JSONMixin, MappingMixin):
 
 class MessageGroup(OrderedDictPlus, JSONMixin):
     def get_next(self):
-        return self.values()[0]
+        return list(self.values())[0]
 
     def get_next_prompt(self):
         return self.get_next().get_prompt()
@@ -166,7 +166,7 @@ class Slot(Question):
         entity_actions = {name: Actions.NoAction}
         super(Slot, self).__init__(name, prompts, entity_actions=entity_actions, help=help, why=why)
         if entity_handler_name:
-            assert type(entity_handler_name) in (str, unicode), 'Invalid entity handler: %s' % entity_handler_name
+            assert type(entity_handler_name) == str, 'Invalid entity handler: %s' % entity_handler_name
         self.entity_handler_name = entity_handler_name
         self.follow_up = follow_up
         if follow_up:
@@ -240,7 +240,7 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
         self.responses = {}
         if responses:
             if isinstance(responses, dict):
-                for response_type, response_texts in responses.iteritems():
+                for response_type, response_texts in responses.items():
                     assert response_type in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred), 'Invalid response type: %s' % response_type
                     assert type(response_texts) in (tuple, list), 'Invalid response format: %s' % response_texts
                     self.responses[response_type] = response_texts
@@ -249,12 +249,12 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
                 assert type(responses) in [list, tuple], 'Invalid response format: %s' % responses
                 self.responses[ResponseTypes.Active] = []
                 for response_text in responses:
-                    assert type(response_text) in (str, unicode), 'Invalid response text: %s' % response_text
+                    assert type(response_text) in (str, str), 'Invalid response text: %s' % response_text
                     self.responses[ResponseTypes.Active].append(response_text)
 
         self.slots = MessageGroup()
         if slots:
-            for slot_name, slot_info in slots.iteritems():
+            for slot_name, slot_info in slots.items():
                 self.slots[slot_name] = Slot.from_dict(slot_name, slot_info, entity_handlers=entity_handlers)
 
     @property
@@ -268,7 +268,7 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
     def get_slot_results_container(self):
         '''Creates a container to store slot results'''
         results = SlotResults()
-        for slot_name, slot in self.slots.iteritems():
+        for slot_name, slot in self.slots.items():
             results[slot_name] = SlotResult(slot_name, None)
         return results
 
@@ -300,7 +300,7 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
             content = resp.content
             resp.raise_for_status()
             return FulfillmentResponse('%s_fulfillment' % self.name, **resp.json())
-        except Exception, e:
+        except Exception as e:
             content = str(e)
             raise
         finally:
@@ -401,7 +401,7 @@ class AddressEntityHandler(EntityHandler):
         }
 
         street_address_parts = []
-        for label, value in address_dict.iteritems():
+        for label, value in address_dict.items():
             if label in ['Recipient', 'NotAddress']:
                 continue
             if label in ['AddressNumber', 'StreetName', 'StreetNamePostType']:
@@ -446,9 +446,9 @@ class FulfillmentResponse(PrintMixin, JSONMixin, MappingMixin):
 
     @initializer
     def __init__(self, name, status=None, status_reason=None, message=None, action=None):
-        assert status and type(status) in (str, unicode), 'Invalid status: %s' % status
+        assert status and type(status) in (str, str), 'Invalid status: %s' % status
         if message:
-            if type(message) in (str, unicode):
+            if type(message) in (str, str):
                 self.message = Message(name, [message])
             elif isinstance(message, dict):
                 message['name'] = message.get('name', name)
@@ -478,7 +478,7 @@ class IntentPrediction(PrintMixin, JSONMixin, MappingMixin):
         return [x for x in self.entity_results if (x.score is None or x.score > score)]
 
     def add_entity_results_from_context(self, context):
-        for k,v in context.iteritems():
+        for k,v in context.items():
             self.entity_results.append(EntityResult(name=k, type=k, value=v, from_context=True))
 
     def get_valid(self, intent_threshold=0, entity_threshold=0):

@@ -23,7 +23,7 @@ class Input(PrintMixin, JSONMixin):
         self.value = None
         self.context = None
 
-        if type(input) in (str, unicode):
+        if type(input) == str:
             self.type = 'text'
             self.value = input
         elif isinstance(input, dict):
@@ -150,7 +150,7 @@ class Transaction(JSONMixin, SaveMixin):
             # are not filled if there are other options
             try:
                 response_message = response_message.format(**context)
-            except KeyError, e:
+            except KeyError as e:
                 raise KeyError('Invalid message template, could not find "%s" in context' % str(e))
             self.response_message_text = response_message
         return response_message
@@ -162,7 +162,7 @@ class Transaction(JSONMixin, SaveMixin):
         self.expected_text = None
 
     def copy_data_from_transaction(self, other_tx):
-        for k,v in vars(other_tx).iteritems():
+        for k,v in vars(other_tx).items():
             if k in self.dont_copy_attrs:
                 continue
             if isinstance(v, dict):
@@ -181,13 +181,13 @@ class Transaction(JSONMixin, SaveMixin):
             return True, None
 
         if self.expected_entities:
-            for entity, action in self.expected_entities.iteritems():
+            for entity, action in self.expected_entities.items():
                 if entity in [x.slot_name for x in entity_results]:
                     dbg('Expected entity %s found in answer' % entity)
                     return True, action
 
         if self.expected_intents:
-            for intent, action in self.expected_intents.iteritems():
+            for intent, action in self.expected_intents.items():
                 if intent in [x.name for x in intent_results]:
                     dbg('Expected intent %s found in answer' % intent)
                     return True, action
@@ -344,14 +344,14 @@ class Conversation(JSONMixin, SaveMixin):
 
     def get_last_transaction(self):
         # Assumes current transaction already added
-        txs = self.transactions.values()
+        txs = list(self.transactions.values())
         if len(txs) < 2:
             return None
         return txs[-2]
 
     def get_last_transaction_with_slot(self, intent=None):
         # Assumes current transaction already added
-        txs = self.transactions.values()
+        txs = list(self.transactions.values())
         if len(txs) < 2:
             return None
         for i, tx in enumerate(reversed(txs)):
@@ -439,7 +439,7 @@ class Conversation(JSONMixin, SaveMixin):
         last_tx = self.get_last_transaction_with_slot(intent=self.active_intent)
         assert last_tx, 'Trying to repeat slot but there is no last transaction with a slot'
         assert last_tx.slots_filled, 'Trying to repeat slot but no slot filled on previous transaction'
-        for slot_name, slot_result in last_tx.slots_filled.iteritems():
+        for slot_name, slot_result in last_tx.slots_filled.items():
             self.clear_filled_slot_result(self.active_intent, slot_result)
 
     def get_next_question_and_prompt(self, tx, remaining_questions):
@@ -475,15 +475,15 @@ class Conversation(JSONMixin, SaveMixin):
         self.remove_active_intent()
 
     def get_remaining_intent_slots(self, intent):
-        return MessageGroup([(k, self.get_intent_slot(intent.name, k)) for k,v in self.get_intent_slot_results(intent.name).iteritems() if v.value is None])
+        return MessageGroup([(k, self.get_intent_slot(intent.name, k)) for k,v in self.get_intent_slot_results(intent.name).items() if v.value is None])
 
     def get_completed_intent_slots(self, intent):
-        return MessageGroup([(k, self.get_intent_slot(intent.name, k)) for k,v in self.get_intent_slot_results(intent.name).iteritems() if v.value is not None])
+        return MessageGroup([(k, self.get_intent_slot(intent.name, k)) for k,v in self.get_intent_slot_results(intent.name).items() if v.value is not None])
 
     def get_filled_slot_results(self):
         filled_slots = {}
-        for intent_name, slot_results in self.intent_slot_results.iteritems():
-            for slot_name, slot_result in slot_results.iteritems():
+        for intent_name, slot_results in self.intent_slot_results.items():
+            for slot_name, slot_result in slot_results.items():
                 if slot_result.value is not None:
                     filled_slots.setdefault(slot_name, MessageGroup())[intent_name] = slot_result
         return filled_slots
@@ -491,7 +491,7 @@ class Conversation(JSONMixin, SaveMixin):
     def get_filled_slot_results_by_intent(self, intent):
         '''returns a simple map of slot names to values for this intent'''
         filled_slots = {}
-        for slot_name, slot_result in self.get_intent_slot_results(intent.name).iteritems():
+        for slot_name, slot_result in self.get_intent_slot_results(intent.name).items():
             if slot_result.value is not None:
                 filled_slots[slot_name] = slot_result
         return filled_slots
@@ -545,7 +545,7 @@ class Conversation(JSONMixin, SaveMixin):
         filled and needed a follow-up that would have already happened.'''
         remaining_slots = self.get_remaining_intent_slots(intent)
         if remaining_slots:
-            for slot_name, slot in remaining_slots.iteritems():
+            for slot_name, slot in remaining_slots.items():
                 if not slot.autofill:
                     continue
 
@@ -556,7 +556,7 @@ class Conversation(JSONMixin, SaveMixin):
 
                 # TODO: this currently takes the first slot with that name, regardless of intent
                 # This slot has already been filled. Reuse its value.
-                slot_result_copy = filled_slots.values()[0].copy()
+                slot_result_copy = list(filled_slots.values())[0].copy()
                 filled_slot = self.fill_intent_slot_result(tx, intent, slot_result_copy.name, slot_result_copy.value)
 
             remaining_slots = self.get_remaining_intent_slots(intent)
@@ -861,7 +861,7 @@ class Conversation(JSONMixin, SaveMixin):
                     if tx_messages:
                         # Messages were already added to this tx by some intent handled above
                         assert not tx_requires_answer, 'A question was asked while another unanswered question is in progress'
-                        for msg_name, msg in reversed(tx_messages.items()):
+                        for msg_name, msg in reversed(list(tx_messages.items())):
                             self.add_response_message(tx, msg_name, msg, prepend=True)
                     else:
                         self.add_common_response_message(tx, self.bot_config, 'unanswered', prepend=True)
@@ -870,7 +870,7 @@ class Conversation(JSONMixin, SaveMixin):
                 return
 
         # All one-off and preemptive intents should have been handled before this
-        for intent_name in self.pending_intents.keys():
+        for intent_name in list(self.pending_intents.keys()):
             intent = self.get_intent(intent_name)
             if intent.is_answer:
                 dbg('Removing is_answer intent from active list: %s' % intent.name)

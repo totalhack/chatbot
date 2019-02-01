@@ -6,10 +6,10 @@ from test import make_request
 convo_id = None
 
 while True:
-    text = raw_input('USER: ')
+    text = input('USER: ')
     resp = make_request(text, convo_id=convo_id)
     data = resp.json()
-    print 'BOT:', data['response']
+    print('BOT:', data['response'])
     if not convo_id:
         convo_id = data['conversation_id']
     else:

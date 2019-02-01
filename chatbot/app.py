@@ -63,7 +63,7 @@ def chat():
             response['transaction'] = tx
         return jsonr(response)
 
-    except Exception, e:
+    except Exception as e:
         # TODO: classify and return error types/codes
         # TODO: log errors, store partially completed convo/tx objects with status?
         dbg(traceback.format_exc())

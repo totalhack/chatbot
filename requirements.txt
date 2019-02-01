@@ -5,7 +5,7 @@ diskcache
 flask
 flask-sqlalchemy
 marshmallow>=3.0.0rc1
-mysql-python
+mysqlclient
 python-dateutil
 requests
 simplejson

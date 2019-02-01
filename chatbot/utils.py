@@ -6,11 +6,12 @@ from dateutil import parser as dateparser
 from functools import wraps
 from importlib import import_module
 import inspect
+import collections
 try:
     import simplejson as json
     from simplejson import JSONEncoder
 except ImportError:
-    print 'WARNING: Failed to import simplejson, falling back to built-in json'
+    print('WARNING: Failed to import simplejson, falling back to built-in json')
     import json
     from json import JSONEncoder
 import os
@@ -47,13 +48,13 @@ def prompt_user(msg, answers):
     answers = [str(x).lower() for x in answers]
     display_answers = '[%s] ' % '/'.join(answers)
     while (answer is None) or (answer.lower() not in answers):
-        answer = raw_input('%s %s' % (msg, display_answers))
+        answer = input('%s %s' % (msg, display_answers))
     return answer
 
 #-------- Object utils
 
 def get_class_vars(cls):
-    return [i for i in dir(cls) if (not callable(i)) and (not i.startswith('_'))]
+    return [i for i in dir(cls) if (not isinstance(i, collections.Callable)) and (not i.startswith('_'))]
 
 def import_object(name):
     if '.' not in name:
@@ -126,7 +127,7 @@ class FontEffects:
     INVERTED = '\033[7m'
 
 def log(msg, label='parent', indent=0, color=None, autocolor=False, format_func=pformat):
-    if type(msg) not in (str, unicode):
+    if type(msg) not in (str, str):
         msg = pformat(msg)
 
     if indent is not None and int(indent):
@@ -145,7 +146,7 @@ def log(msg, label='parent', indent=0, color=None, autocolor=False, format_func=
     if color:
         msg = getattr(FontColors, color.upper()) + msg + FontSpecialChars.ENDC
 
-    print msg
+    print(msg)
 
 def dbg(msg, label='parent', app_config=None, **kwargs):
     if app_config:
@@ -207,22 +208,9 @@ def dictmerge(x, y, path=None, overwrite=False):
 
 # https://stackoverflow.com/questions/16664874/how-can-i-add-an-element-at-the-top-of-an-ordereddict-in-python
 class OrderedDictPlus(OrderedDict):
-    def prepend(self, key, value, dict_setitem=dict.__setitem__):
-        root = self._OrderedDict__root
-        first = root[1]
-
-        if key in self:
-            if first[2] != key:
-                link = self._OrderedDict__map[key]
-                link_prev, link_next, _ = link
-                link_prev[1] = link_next
-                link_next[0] = link_prev
-                link[0] = root
-                link[1] = first
-                root[1] = first[0] = link
-        else:
-            root[1] = first[0] = self._OrderedDict__map[key] = [root, first, key]
-            dict_setitem(self, key, value)
+    def prepend(self, key, value):
+        self.update({key:value})
+        self.move_to_end(key, last=False)
 
 def _default(self, obj):
     return getattr(obj.__class__, 'to_json', _default.default)(obj)
@@ -240,7 +228,7 @@ class JSONMixin(object):
             result = self
         else:
             result = self.__dict__.copy()
-        for k, v in result.iteritems():
+        for k, v in result.items():
             if hasattr(v, 'to_dict'):
                 result[k] = v.to_dict()
         return result
@@ -280,7 +268,7 @@ def paged_call(func, size_param, offset_param, page_size, *_args, **_kwargs):
         if result_len < page_size:
             break
 
-    print 'Got %d results' % offset
+    print('Got %d results' % offset)
     return results
 
 def paged_get(url, size_param, offset_param, page_size, *_args, **_kwargs):
@@ -300,7 +288,7 @@ def paged_get(url, size_param, offset_param, page_size, *_args, **_kwargs):
         if result_len < page_size:
             break
 
-    print 'Got %d results' % offset
+    print('Got %d results' % offset)
     return results
 
 #-------- Date utils

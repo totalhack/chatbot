@@ -86,7 +86,7 @@ class LUISNLU(NLU):
         entities = []
         for entity in raw['entities']:
             entity['type'] = self.ENTITY_TRANSLATIONS.get(entity['type'], entity['type'])
-            if 'resolution' in entity.keys():
+            if 'resolution' in list(entity.keys()):
                 resolution = entity['resolution']
                 if 'values' in resolution:
                     entity['value'] = entity['resolution'].get('values', [])
@@ -159,11 +159,11 @@ class LUISNLU(NLU):
             status = ApplicationTrainingResult.TRAINED
         return ApplicationTrainingResult(status)
 
-    def train(self, async=False, app_version=None):
+    def train(self, asynchronous=True, app_version=None):
         app_version = app_version or self.app_version
-        dbg('Training app, async:%s' % async)
+        dbg('Training app, asynchronous:%s' % asynchronous)
         result = self.authoring_client.train.train_version(self.app_id, app_version)
-        if async:
+        if asynchronous:
             return LUISNLU.to_application_training_result(result)
         result = poll_call(self.get_application_training_status, 'status', 'Trained', 1, 100, app_version=app_version)
         return LUISNLU.to_application_training_result(result)

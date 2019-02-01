@@ -22,11 +22,11 @@ def main(f, bot, version, train, publish, dry_run, force):
     versions = {x['version']:x for x in nlu.get_application_versions()}
 
     if version not in versions:
-        print 'Version "%s" is not in current versions. A new version will be created' % version
+        print('Version "%s" is not in current versions. A new version will be created' % version)
         if not force:
             answer = prompt_user('Are you sure you want to create a new app version?', ['y', 'n'])
             if answer == 'n':
-                print 'Exiting.'
+                print('Exiting.')
                 return
 
         nlu.clone_current_version(version)
@@ -34,12 +34,12 @@ def main(f, bot, version, train, publish, dry_run, force):
         if not force:
             answer = prompt_user('Are you sure you want to add intents to existing version "%s"?' % version, ['y', 'n'])
             if answer == 'n':
-                print 'Exiting.'
+                print('Exiting.')
                 return
 
     current_intents = {x['name']:x for x in nlu.get_intents(app_version=version)}
 
-    for intent_name, intent_data in bot_config.intent_configs.iteritems():
+    for intent_name, intent_data in bot_config.intent_configs.items():
         dbg('---- Processing intent "%s"' % intent_name)
 
         intent = current_intents.get(intent_name, None)

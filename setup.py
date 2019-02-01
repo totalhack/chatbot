@@ -15,7 +15,7 @@ setup(
     maintainer='totalhack',
     version='0.0',
     classifiers=['License :: MIT License',
-                 'Programming Language :: Python :: 2/3',
+                 'Programming Language :: Python :: 3',
                  ],
     packages=find_packages(),
     include_package_data=True,

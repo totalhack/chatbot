@@ -45,5 +45,5 @@ if __name__ == '__main__':
     from chatbot import app
     db.init_app(app)
     with app.app_context():
-        print 'Creating database...'
+        print('Creating database...')
         db.create_all()
