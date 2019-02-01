@@ -17,7 +17,6 @@ setup_caching(app.config)
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    debug = request.values.get('debug', None)
     try:
         input = json.loads(request.values['input'])
         bot = request.values['bot']
@@ -60,15 +59,18 @@ def chat():
                     'completed_intent_name': tx.completed_intent_name,
                     'completed_conversation': convo.completed,
                     'fulfillment_data': convo.get_fulfillment_data(tx, tx.completed_intent_name) if tx.completed_intent_name else None}
-        if debug:
+        if app.config['DEBUG']:
             response['transaction'] = tx
         return jsonr(response)
 
     except Exception, e:
-        print traceback.format_exc()
+        # TODO: classify and return error types/codes
+        # TODO: log errors, store partially completed convo/tx objects with status?
+        dbg(traceback.format_exc())
         error(str(e))
         response = {'status': 'error', 'response': 'Something went wrong.'}
-        if debug: response['error'] = traceback.format_exc()
+        if app.config['DEBUG']:
+            response['error'] = traceback.format_exc()
         return jsonr(response)
 
 @app.route('/fulfillment', methods=['POST'])
