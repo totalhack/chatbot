@@ -104,7 +104,7 @@ def parse_schema_file(filename, schema):
         result = json.loads(raw, object_pairs_hook=OrderedDict)
     except ValidationError as e:
         error('Schema Validation Error')
-        print(json.dumps(e.message, indent=2))
+        print(json.dumps(str(e), indent=2))
         raise
     return result
 
