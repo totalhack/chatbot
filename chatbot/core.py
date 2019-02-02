@@ -39,9 +39,7 @@ class Actions(object):
     Repeat = 'Repeat'
     RepeatSlot = 'RepeatSlot'
     ReplaceSlot = 'ReplaceSlot'
-
-class VariableActions(object):
-    Trigger = 'Trigger'
+    TriggerIntent = 'TriggerIntent'
     ConfirmSwitchIntent = 'ConfirmSwitchIntent'
     RemoveIntent = 'RemoveIntent'
     RepeatSlotAndRemoveIntent = 'RepeatSlotAndRemoveIntent'
@@ -67,16 +65,95 @@ def get_nlu(bot_config):
     nlu_class = import_object(bot_config.nlu_class)
     return nlu_class(bot_config.nlu_config)
 
+class Action(PrintMixin, JSONMixin, MappingMixin):
+    repr_attrs = ['name', 'params']
+
+    def __init__(self, definition):
+        if isinstance(definition, dict):
+            self.name = definition['name']
+            self.params = definition.get('params', {})
+        elif type(definition) == str:
+            self.name = definition
+            self.params = {}
+        elif definition == None:
+            self.name = None
+            self.params = None
+        else:
+            assert False, 'Invalid type for Action: %s' % definition
+
+    def __nonzero__(self):
+        if self.name:
+            return True
+        return False
+
+class ActionMap(JSONMixin, MappingMixin):
+    def __init__(self, *args, **kwargs):
+        self.update(dict(*args, **kwargs))
+
+    def __setitem__(self, key, value):
+        if not isinstance(value, Action):
+            value = Action(value)
+        self.__dict__[key] = value
+
 class Message(PrintMixin, JSONMixin, MappingMixin):
     repr_attrs = ['name']
 
     @initializer
-    def __init__(self, name, prompts):
-        pass
+    def __init__(self, name, prompts, action=None):
+        if action and not isinstance(action, Action):
+            self.action = Action(action)
+        assert all([isinstance(x, str) for x in prompts]), 'Message prompts must all be strings: %s' % prompts
 
     def get_prompt(self):
         prompt = random.choice(self.prompts)
         return prompt
+
+    @classmethod
+    def infer_type_from_dict(cls, message):
+        assert isinstance(message, dict), 'Invalid message type: %s' % message
+        # TODO: is there a better way to do this? We can tell its a question because
+        # its expecting an answer, but we can't tell if its a Slot or Question
+        if 'intent_actions' in message or 'entity_actions' in message:
+            return 'question'
+        return 'message'
+
+    @classmethod
+    def from_dict(cls, message_dict):
+        message_type = message_dict['type'].lower()
+        if message_type == 'message':
+            return Message(message_dict['name'],
+                           message_dict['prompts'],
+                           action=message_dict.get('action', None))
+        elif message_type == 'question':
+            return Question(message_dict['name'],
+                            message_dict['prompts'],
+                            intent_actions=ActionMap(message_dict.get('intent_actions', {})),
+                            entity_actions=ActionMap(message_dict.get('entity_actions', {})),
+                            help=message_dict.get('help', None),
+                            why=message_dict.get('why', None))
+        elif message_type == 'slot':
+            return Slot(message_dict['name'],
+                        message_dict['prompts'],
+                        entity_handler_name=message_dict.get('entity_handler_name', None),
+                        follow_up=message_dict.get('follow_up', None),
+                        help=message_dict.get('help', None),
+                        why=message_dict.get('why', None))
+        else:
+            assert False, 'Invalid message type: %s' % message_type
+
+    @classmethod
+    def create(cls, name, message):
+        if isinstance(message, Message):
+            return message
+        if isinstance(message, str):
+            return Message(name, [message])
+        if isinstance(message, list):
+            return Message(name, message)
+        if isinstance(message, dict):
+            message['type'] = message.get('type', cls.infer_type_from_dict(message))
+            message['name'] = message.get('name', name)
+            return cls.from_dict(message)
+        assert False, 'Invalid message type: %s' % message
 
 class MessageGroup(OrderedDictPlus, JSONMixin):
     def get_next(self):
@@ -85,26 +162,24 @@ class MessageGroup(OrderedDictPlus, JSONMixin):
     def get_next_prompt(self):
         return self.get_next().get_prompt()
 
-def message_from_dict(message_dict):
-    message_type = message_dict['type'].lower()
-    if message_type == 'message':
-        return Message(message_dict['name'], message_dict['prompts'])
-    elif message_type == 'question':
-        return Question(message_dict['name'],
-                        message_dict['prompts'],
-                        intent_actions=message_dict.get('intent_actions', None),
-                        entity_actions=message_dict.get('entity_actions', None),
-                        help=message_dict.get('help', None),
-                        why=message_dict.get('why', None))
-    elif message_type == 'slot':
-        return Slot(message_dict['name'],
-                    message_dict['prompts'],
-                    entity_handler_name=message_dict.get('entity_handler_name', None),
-                    follow_up=message_dict.get('follow_up', None),
-                    help=message_dict.get('help', None),
-                    why=message_dict.get('why', None))
-    else:
-        assert False, 'Invalid message type: %s' % message_type
+class MessageMap(JSONMixin, MappingMixin):
+    def __init__(self, *args, **kwargs):
+        self.update(dict(*args, **kwargs))
+
+    def __setitem__(self, key, value):
+        if not isinstance(value, Message):
+            value = Message.create(key, value)
+        self.__dict__[key] = value
+
+class ResponseMap(MessageMap):
+    def __setitem__(self, key, value):
+        assert key in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred), 'Invalid response type: %s' % key
+        super(ResponseMap, self).__setitem__(key, value)
+
+    def get_response(self, rtype):
+        if rtype not in self:
+            return ''
+        return self[rtype].get_prompt()
 
 class Question(Message):
     repr_attrs = ['name']
@@ -115,10 +190,10 @@ class Question(Message):
         self.help = help
         self.why = why
         if intent_actions:
-            assert isinstance(intent_actions, dict), 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
+            assert isinstance(intent_actions, ActionMap), 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
         self.entity_actions = entity_actions
         if entity_actions:
-            assert isinstance(entity_actions, dict), 'Invalid type for entity_actions, must be dict: %s' % type(entity_actions)
+            assert isinstance(entity_actions, ActionMap), 'Invalid type for entity_actions, must be dict: %s' % type(entity_actions)
 
     def get_intent_actions(self):
         return self.intent_actions
@@ -163,7 +238,7 @@ class Slot(Question):
 
     def __init__(self, name, prompts, entity_handler_name=None, follow_up=None, autofill=None, help=None, why=None):
         # TODO: should slot be filled by an action? Allow overriding intent/entity actions for slots?
-        entity_actions = {name: Actions.NoAction}
+        entity_actions = ActionMap({name: Actions.NoAction})
         super(Slot, self).__init__(name, prompts, entity_actions=entity_actions, help=help, why=why)
         if entity_handler_name:
             assert type(entity_handler_name) == str, 'Invalid entity handler: %s' % entity_handler_name
@@ -221,8 +296,8 @@ class FollowUp(Question):
             # If they provide the slot answer, process it and continue
             entity_actions = {slot_name: Actions.ReplaceSlot}
             follow_up = cls(follow_up_name, follow_up_info['prompts'],
-                            intent_actions=follow_up_info.get('intent_actions', DEFAULT_FOLLOW_UP_ACTIONS),
-                            entity_actions=entity_actions,
+                            intent_actions=ActionMap(follow_up_info.get('intent_actions', DEFAULT_FOLLOW_UP_ACTIONS)),
+                            entity_actions=ActionMap(entity_actions),
                             help=follow_up_info.get('help', None),
                             why=follow_up_info.get('why', None))
         return follow_up
@@ -237,20 +312,17 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
         if self.is_app_intent:
             assert not self.is_preemptive, 'Preemptive bot intents are not currently supported'
 
-        self.responses = {}
         if responses:
-            if isinstance(responses, dict):
-                for response_type, response_texts in responses.items():
-                    assert response_type in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred), 'Invalid response type: %s' % response_type
-                    assert type(response_texts) in (tuple, list), 'Invalid response format: %s' % response_texts
-                    self.responses[response_type] = response_texts
-            else:
-                # Assume its a list of possible responses for the Active case by default
-                assert type(responses) in [list, tuple], 'Invalid response format: %s' % responses
-                self.responses[ResponseTypes.Active] = []
-                for response_text in responses:
-                    assert type(response_text) in (str, str), 'Invalid response text: %s' % response_text
-                    self.responses[ResponseTypes.Active].append(response_text)
+            if not isinstance(responses, dict):
+                responses = {ResponseTypes.Active:responses}
+            self.responses = ResponseMap()
+            self.responses.update(responses)
+
+        if help:
+            self.help = Message.create('%s:help' % name, help)
+
+        if why:
+            self.why = Message.create('%s:why' % name, why)
 
         self.slots = MessageGroup()
         if slots:
@@ -315,14 +387,12 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
     def get_help(self):
         if not self.help:
             return None
-        help = random.choice(self.help)
-        return help
+        return self.help.get_prompt()
 
     def get_why(self):
         if not self.why:
             return None
-        why = random.choice(self.why)
-        return why
+        return self.why.get_prompt()
 
 class IntentResult(PrintMixin, JSONMixin, MappingMixin):
     repr_attrs = ['name', 'score']
@@ -446,13 +516,17 @@ class FulfillmentResponse(PrintMixin, JSONMixin, MappingMixin):
 
     @initializer
     def __init__(self, name, status=None, status_reason=None, message=None, action=None):
-        assert status and type(status) in (str, str), 'Invalid status: %s' % status
+        assert status and type(status) == str, 'Invalid status: %s' % status
+
+        if action and not isinstance(action, Action):
+            self.action = Action(action)
+
         if message:
             if type(message) in (str, str):
                 self.message = Message(name, [message])
             elif isinstance(message, dict):
                 message['name'] = message.get('name', name)
-                self.message = message_from_dict(message)
+                self.message = Message.from_dict(message)
             else:
                 assert False, 'Invalid message: %s' % message
 

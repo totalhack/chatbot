@@ -205,6 +205,7 @@ class BotConfigLoader(JSONMixin):
             common_messages = copy.deepcopy(COMMON_MESSAGES)
             bot_common_messages = bot_config.get('common_messages', {})
             common_messages.update(bot_common_messages)
+            common_messages = MessageMap(common_messages)
 
             intent_configs = copy.deepcopy(COMMON_INTENT_CONFIGS)
             bot_intent_configs = bot_config.get('intent_configs', {})
@@ -271,36 +272,64 @@ def is_valid_response_type(val):
         return True
     raise ValidationError('Invalid response type: %s' % val)
 
+def is_valid_response(val):
+    if type(val) == list:
+        if not all([type(x) == str for x in val]):
+            raise ValidationError('Invalid Responses format: %s' % val)
+    elif isinstance(val, dict):
+        schema = ResponsesSchema()
+        result = schema.load(val)
+    else:
+        raise ValidationError('Invalid Responses format: %s' % val)
+
 def is_valid_action(val):
     actions = get_class_vars(Actions)
-    if val in actions:
-        return True
+    if isinstance(val, dict):
+        schema = ActionSchema()
+        result = schema.load(val)
+        if val['name'] in actions:
+            return True
+    else:
+        if val in actions:
+            return True
     raise ValidationError('Invalid action: %s' % val)
+
+def is_valid_message(val):
+    if type(val) == list:
+        if not all([type(x) == str for x in val]):
+            raise ValidationError('Invalid Message format: %s' % val)
+    elif isinstance(val, dict):
+        schema = MessageSchema()
+        result = schema.load(val)
+    else:
+        raise ValidationError('Invalid Message format: %s' % val)
 
 class BaseSchema(Schema):
     class Meta:
         # The json module as imported from utils
         json_module = json
 
+class ActionSchema(BaseSchema):
+    name = fields.Str(required=True)
+    params = fields.Dict(keys=fields.Str(), values=fields.Field())
+
+class ActionField(fields.Field):
+    def _validate(self, value):
+        result = is_valid_action(value)
+        super(ActionField, self)._validate(value)
+
 class MessageSchema(BaseSchema):
     prompts = fields.List(fields.Str())
     help = fields.List(fields.Str())
     why = fields.List(fields.Str())
-    entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
+    entity_actions = fields.Dict(keys=fields.Str(), values=ActionField())
     # TODO: validate it is a valid intent
-    intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
-    action = fields.Str(validate=is_valid_action)
+    intent_actions = fields.Dict(keys=fields.Str(), values=ActionField())
+    action = ActionField()
 
 class MessageField(fields.Field):
     def _validate(self, value):
-        if type(value) == list:
-            if not all([type(x) in (str, str) for x in value]):
-                raise ValidationError('Invalid Message format: %s' % value)
-        elif isinstance(value, dict):
-            schema = MessageSchema()
-            result = schema.load(value)
-        else:
-            raise ValidationError('Invalid Message format: %s' % value)
+        result = is_valid_message(value)
         super(MessageField, self)._validate(value)
 
 class ResponsesSchema(BaseSchema):
@@ -310,24 +339,17 @@ class ResponsesSchema(BaseSchema):
 
 class ResponsesField(fields.Field):
     def _validate(self, value):
-        if type(value) == list:
-            if not all([type(x) in (str, str) for x in value]):
-                raise ValidationError('Invalid Responses format: %s' % value)
-        elif isinstance(value, dict):
-            schema = ResponsesSchema()
-            result = schema.load(value)
-        else:
-            raise ValidationError('Invalid Responses format: %s' % value)
+        result = is_valid_response(value)
         super(ResponsesField, self)._validate(value)
 
 class SlotFollowUpSchema(BaseSchema):
     prompts = fields.List(fields.Str(), required=True)
     help = fields.List(fields.Str())
     why = fields.List(fields.Str())
-    entity_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
+    entity_actions = fields.Dict(keys=fields.Str(), values=ActionField())
     # TODO: validate it is a valid intent
-    intent_actions = fields.Dict(keys=fields.Str(), values=fields.Str(validate=is_valid_action))
-    action = fields.Str(validate=is_valid_action)
+    intent_actions = fields.Dict(keys=fields.Str(), values=ActionField())
+    action = ActionField()
 
 class IntentSlotSchema(BaseSchema):
     prompts = fields.List(fields.Str())

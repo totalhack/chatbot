@@ -97,7 +97,8 @@ def fulfillment_with_question():
     response = {'status': 'success',
                 'message': {'type': 'question',
                             'prompts': ['I couldnt find anyone to help. Would you like to try MyIntent instead?'],
-                            'intent_actions': {CommonIntents.Yes: 'TriggerMyIntent',
+                            'intent_actions': {CommonIntents.Yes: {'name': 'TriggerIntent',
+                                                                   'params': {'intent_name': 'MyIntent'}},
                                                CommonIntents.No: Actions.EndConversation}}}
     return jsonr(response)
 
