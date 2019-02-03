@@ -14,6 +14,7 @@ COMMON_INTENT_FILE = os.path.join(os.path.dirname(__file__), 'nlu/common_intents
 SMALLTALK_INTENT_FILE = os.path.join(os.path.dirname(__file__), 'nlu/smalltalk_intents.json')
 
 DEFAULT_NLU_CLASS = 'chatbot.nlu.luis.LUISNLU'
+DEFAULT_NEW_INTENT_LIMIT = 2 # TODO: not all NLUs will support returning multiple intents
 DEFAULT_INTENT_FILTER_THRESHOLD = 0.50
 DEFAULT_ENTITY_FILTER_THRESHOLD = 0.50
 DEFAULT_MAX_QUESTION_ATTEMPTS = 2
@@ -143,6 +144,7 @@ class BotConfig(JSONMixin, MappingMixin):
     def __init__(self, name, intent_configs, entity_handlers, common_messages, nlu_class, nlu_config,
                  intent_filter_threshold=DEFAULT_INTENT_FILTER_THRESHOLD,
                  entity_filter_threshold=DEFAULT_ENTITY_FILTER_THRESHOLD,
+                 new_intent_limit=DEFAULT_NEW_INTENT_LIMIT,
                  max_question_attempts=DEFAULT_MAX_QUESTION_ATTEMPTS,
                  max_consecutive_message_attempts=DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS,
                  max_consecutive_repeat_attempts=DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS,
@@ -232,6 +234,7 @@ class BotConfigLoader(JSONMixin):
                 common_messages,
                 bot_config.get('nlu_class', self.app_config.get('NLU_CLASS', DEFAULT_NLU_CLASS)),
                 bot_config.get('nlu_config', self.app_config['NLU_CONFIG']),
+                new_intent_limit=bot_config.get('new_intent_limit', self.app_config.get('NEW_INTENT_LIMIT', DEFAULT_NEW_INTENT_LIMIT)),
                 intent_filter_threshold=bot_config.get('intent_filter_threshold', DEFAULT_INTENT_FILTER_THRESHOLD),
                 entity_filter_threshold=bot_config.get('entity_filter_threshold', DEFAULT_ENTITY_FILTER_THRESHOLD),
                 max_question_attempts=bot_config.get('max_question_attempts', DEFAULT_MAX_QUESTION_ATTEMPTS),
@@ -257,6 +260,13 @@ def load_bot_configs(app_config, load_tests=False):
         BOT_CONFIGS.update(loader.configs)
 
 #-------- Schema Validation
+
+def is_int_greater_or_equal_to_one(val):
+    if type(val) != int:
+        raise ValidationError('Must be an integer >= 1: %s' % val)
+    if val >= 1:
+        return True
+    raise ValidationError('Must be an integer >= 1: %s' % val)
 
 def is_zero_to_one(val):
     if val is None:
@@ -378,6 +388,7 @@ class IntentConfigSchema(BaseSchema):
 class BotConfigFileSchema(BaseSchema):
     intent_filter_threshold = fields.Float(validate=is_zero_to_one)
     entity_filter_threshold = fields.Float(validate=is_zero_to_one)
+    new_intent_limit = fields.Integer(validate=is_int_greater_or_equal_to_one)
     max_question_attempts = fields.Integer()
     max_consecutive_message_attempts = fields.Integer()
     max_consecutive_repeat_attempts = fields.Integer()

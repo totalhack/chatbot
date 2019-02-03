@@ -934,6 +934,9 @@ class Conversation(JSONMixin, SaveMixin):
                                                                      entity_threshold=self.bot_config.entity_filter_threshold)
         if not intent_results:
             warn('no valid intent results found')
+        if self.bot_config.new_intent_limit:
+            dbg('Limiting processing to top %s intent(s)' % self.bot_config.new_intent_limit)
+            intent_results = intent_results[:self.bot_config.new_intent_limit]
         self.create_response_message(tx, intent_results, entity_results)
 
     def create_transaction(self):
