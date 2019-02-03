@@ -56,7 +56,7 @@ COMMON_MESSAGES = {
         'action': Actions.EndConversation,
     },
 
-    'intent_canceled': {
+    'cancel_intent?': {
         'prompts': [
             "Are you sure you want to cancel the current intent?",
         ],

@@ -34,15 +34,18 @@ class ResponseTypes(object):
 
 class Actions(object):
     CancelIntent = 'CancelIntent'
+    ConfirmCancelIntent = 'ConfirmCancelIntent'
+    ConfirmSwitchIntent = 'ConfirmSwitchIntent'
     EndConversation = 'EndConversation'
+    Help = 'Help'
     NoAction = 'NoAction'
+    RemoveIntent = 'RemoveIntent'
     Repeat = 'Repeat'
     RepeatSlot = 'RepeatSlot'
+    RepeatSlotAndRemoveIntent = 'RepeatSlotAndRemoveIntent'
     ReplaceSlot = 'ReplaceSlot'
     TriggerIntent = 'TriggerIntent'
-    ConfirmSwitchIntent = 'ConfirmSwitchIntent'
-    RemoveIntent = 'RemoveIntent'
-    RepeatSlotAndRemoveIntent = 'RepeatSlotAndRemoveIntent'
+    Why = 'Why'
 
 DEFAULT_FOLLOW_UP_ACTIONS = {
     CommonIntents.Yes: Actions.NoAction,

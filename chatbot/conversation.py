@@ -256,11 +256,11 @@ class Conversation(JSONMixin, SaveMixin):
 
         self.active_intent_name = value.name
 
-    def _action_NoAction(self, *args, **kwargs):
-        pass
-
     def _action_CancelIntent(self, tx, **kwargs):
         self.cancel_intent(tx)
+
+    def _action_ConfirmCancelIntent(self, tx, params=None, **kwargs):
+        self.add_common_response_message(tx, self.bot_config, 'cancel_intent?')
 
     def _action_ConfirmSwitchIntent(self, tx, params=None, **kwargs):
         msg_name = 'intent_switch:%s' % params['intent_name']
@@ -283,8 +283,33 @@ class Conversation(JSONMixin, SaveMixin):
         if not skip_common_messages:
             self.add_common_response_message(tx, self.bot_config, 'goodbye')
 
+    def _action_Help(self, tx, **kwargs):
+        self.add_help_or_why_message(tx, 'help')
+
+    def _action_NoAction(self, *args, **kwargs):
+        pass
+
     def _action_RemoveIntent(self, tx, params=None, **kwargs):
         self.remove_intent(params['intent_name'])
+
+    def _action_Repeat(self, tx, params=None, **kwargs):
+        last_tx = self.get_last_transaction()
+        reason = params.get('reason', None) if params else None
+        question_only = params.get('question_only', False) if params else False
+
+        if last_tx:
+            if self.consecutive_repeat_count >= self.bot_config.max_consecutive_repeat_attempts:
+                self.add_common_response_message(tx, self.bot_config, 'repeat_exhausted')
+            else:
+                if self.transaction_repeatable(last_tx):
+                    self.repeat_transaction(tx, last_tx, reason=reason, question_only=question_only)
+                else:
+                    self.abort_intent(tx)
+        else:
+            if self.consecutive_message_count['fallback'] >= self.bot_config.max_consecutive_message_attempts:
+                self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
+            else:
+                self.add_common_response_message(tx, self.bot_config, 'fallback')
 
     def _action_RepeatSlot(self, *args, **kwargs):
         self.repeat_slot()
@@ -318,6 +343,9 @@ class Conversation(JSONMixin, SaveMixin):
         intent_name = params['intent_name']
         intent_result = get_triggered_intent_result(self.bot_config, intent_name)
         self.prepend_pending_intent(intent_name)
+
+    def _action_Why(self, tx, **kwargs):
+        self.add_help_or_why_message(tx, 'why')
 
     def do_action(self, tx, action, entity_results=None, intent_results=None, skip_common_messages=False):
         dbg('Do action %s' % action)
@@ -720,6 +748,29 @@ class Conversation(JSONMixin, SaveMixin):
 
         self.add_response_message(tx, message_name, message_text, expected_entities=expected_entities, expected_intents=expected_intents, prepend=prepend)
 
+    # Yea, I don't know what else to call this right now.
+    def add_help_or_why_message(self, tx, message_type):
+        last_tx = self.get_last_transaction()
+        if last_tx and last_tx.question and getattr(last_tx.question, message_type):
+            msg = getattr(last_tx.question, 'get_%s' % message_type)()
+            msg_name = '%s:%s' % (last_tx.question.name, message_type)
+            if self.consecutive_message_count[msg_name] >= self.bot_config.max_consecutive_message_attempts:
+                self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
+                return
+            self.add_response_message(tx, msg_name, msg)
+        elif self.active_intent and getattr(self.active_intent, message_type):
+            msg = getattr(self.active_intent, 'get_%s' % message_type)()
+            msg_name = '%s:%s' % (self.active_intent.name, message_type)
+            if self.consecutive_message_count[msg_name] >= self.bot_config.max_consecutive_message_attempts:
+                self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
+                return
+            self.add_response_message(tx, msg_name, msg)
+        else:
+            if self.consecutive_message_count[message_type] >= self.bot_config.max_consecutive_message_attempts:
+                self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
+                return
+            self.add_common_response_message(tx, self.bot_config, message_type)
+
     def create_response_message(self, tx, intent_results, entity_results):
         last_tx = self.get_last_transaction()
         greeted = False
@@ -749,71 +800,25 @@ class Conversation(JSONMixin, SaveMixin):
 
                 if intent.name == CommonIntents.Cancel:
                     dbg('Cancel Intent')
-                    self.add_common_response_message(tx, self.bot_config, 'intent_canceled')
+                    self.do_action(tx, Action('ConfirmCancelIntent'))
                     return
 
                 if intent.name == CommonIntents.Repeat:
-                    dbg('Repeat Intent')
-                    if last_tx:
-                        if self.consecutive_repeat_count >= self.bot_config.max_consecutive_repeat_attempts:
-                            self.add_common_response_message(tx, self.bot_config, 'repeat_exhausted')
-                        else:
-                            if self.transaction_repeatable(last_tx):
-                                self.repeat_transaction(tx, last_tx, reason='user request')
-                            else:
-                                self.abort_intent(tx)
-                    else:
-                        if self.consecutive_message_count['fallback'] >= self.bot_config.max_consecutive_message_attempts:
-                            self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                        else:
-                            self.add_common_response_message(tx, self.bot_config, 'fallback')
+                    dbg('Repeat')
+                    self.do_action(tx, Action({'name':'Repeat', 'params': {'reason':'user request'}}))
                     return
-
-                # TODO: refactor to share logic
 
                 if intent.name == CommonIntents.Help:
                     dbg('Help Intent')
-                    if last_tx and last_tx.question and last_tx.question.help:
-                        help_msg = last_tx.question.get_help()
-                        msg_name = '%s:help' % last_tx.question.name
-                        if self.consecutive_message_count[msg_name] >= self.bot_config.max_consecutive_message_attempts:
-                            self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                            return
-                        self.add_response_message(tx, msg_name, help_msg)
-                    elif self.active_intent and self.active_intent.help:
-                        help_msg = self.active_intent.get_help()
-                        msg_name = '%s:help' % self.active_intent.name
-                        if self.consecutive_message_count[msg_name] >= self.bot_config.max_consecutive_message_attempts:
-                            self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                            return
-                        self.add_response_message(tx, msg_name, help_msg)
-                    else:
-                        if self.consecutive_message_count['help'] >= self.bot_config.max_consecutive_message_attempts:
-                            self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                            return
-                        self.add_common_response_message(tx, self.bot_config, 'help')
+                    self.do_action(tx, Action('Help'))
+                    if 'message_exhaused' in tx.response_messages:
+                        return
 
                 if intent.name == CommonIntents.Why:
                     dbg('Why Intent')
-                    if last_tx and last_tx.question and last_tx.question.why:
-                        why_msg = last_tx.question.get_why()
-                        msg_name = '%s:why' % last_tx.question.name
-                        if self.consecutive_message_count[msg_name] >= self.bot_config.max_consecutive_message_attempts:
-                            self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                            return
-                        self.add_response_message(tx, msg_name, why_msg)
-                    elif self.active_intent and self.active_intent.why:
-                        why_msg = self.active_intent.get_why()
-                        msg_name = '%s:why' % self.active_intent.name
-                        if self.consecutive_message_count[msg_name] >= self.bot_config.max_consecutive_message_attempts:
-                            self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                            return
-                        self.add_response_message(tx, msg_name, why_msg)
-                    else:
-                        if self.consecutive_message_count['why'] >= self.bot_config.max_consecutive_message_attempts:
-                            self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                            return
-                        self.add_common_response_message(tx, self.bot_config, 'why')
+                    self.do_action(tx, Action('Why'))
+                    if 'message_exhaused' in tx.response_messages:
+                        return
 
                 if intent.is_smalltalk:
                     if i > 0:
@@ -825,10 +830,6 @@ class Conversation(JSONMixin, SaveMixin):
                         warn('smalltalk disabled, skipping intent: %s' % intent.name)
                         continue
 
-                    self.add_pending_intent(intent.name)
-                    tx.add_new_intent(intent.name)
-                    # We are adding this under the assumption this intent will get removed because it is
-                    # preemptive.
                     self.add_new_intent_message(tx, intent, response_type=ResponseTypes.Active, entity_results=entity_results)
 
             else:
@@ -859,7 +860,10 @@ class Conversation(JSONMixin, SaveMixin):
                     tx_requires_answer = tx.requires_answer()
                     self.repeat_transaction(tx, last_tx, reason='last transaction not answered', question_only=True)
                     if tx_messages:
-                        # Messages were already added to this tx by some intent handled above
+                        # Messages were already added to this tx by some previously processed intent.
+                        # The assertion below ensures that we arent asking two questions at once. That's
+                        # not allowed, but we probably need a better way to handle this situation since this
+                        # may be an easy trap for the bot designer to fall into.
                         assert not tx_requires_answer, 'A question was asked while another unanswered question is in progress'
                         for msg_name, msg in reversed(list(tx_messages.items())):
                             self.add_response_message(tx, msg_name, msg, prepend=True)
