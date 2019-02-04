@@ -102,12 +102,15 @@ class Message(PrintMixin, JSONMixin, MappingMixin):
     repr_attrs = ['name']
 
     @initializer
-    def __init__(self, name, prompts, action=None):
+    def __init__(self, name, prompts=None, action=None):
+        if self.prompts:
+            assert all([isinstance(x, str) for x in prompts]), 'Message prompts must all be strings: %s' % prompts
         if action and not isinstance(action, Action):
             self.action = Action(action)
-        assert all([isinstance(x, str) for x in prompts]), 'Message prompts must all be strings: %s' % prompts
 
     def get_prompt(self):
+        if not self.prompts:
+            return ''
         prompt = random.choice(self.prompts)
         return prompt
 
@@ -155,6 +158,7 @@ class Message(PrintMixin, JSONMixin, MappingMixin):
         if isinstance(message, dict):
             message['type'] = message.get('type', cls.infer_type_from_dict(message))
             message['name'] = message.get('name', name)
+            message['prompts'] = message.get('prompts', None)
             return cls.from_dict(message)
         assert False, 'Invalid message type: %s' % message
 
