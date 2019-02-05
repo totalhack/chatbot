@@ -774,10 +774,19 @@ class Conversation(JSONMixin, SaveMixin):
     def create_response_message(self, tx, intent_results, entity_results):
         last_tx = self.get_last_transaction()
         greeted = False
+        common_intent_handled = False
 
         # Analyze new intents
         for i, intent_result in enumerate(intent_results):
             intent = self.get_intent(intent_result.name)
+            if intent.is_common_intent:
+                if common_intent_handled:
+                    # Only allow a single common intent to be counted per transaction.
+                    # The assumption is that there would never be a scenario where two
+                    # common intents should be valid, so we just take the top one.
+                    dbg('Skipping additional common intent: %s' % intent)
+                    continue
+                common_intent_handled = True
 
             if intent.is_greeting:
                 if i > 0:
