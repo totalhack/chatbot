@@ -352,8 +352,6 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
         return results
 
     def get_fulfillment_data(self, convo, tx, slot_data):
-        if not self.fulfillment:
-            return {}
         slot_value_data = {k:slot_data[k].value for k in self.slots}
         return dict(conversation_id=convo.id,
                     transaction_id=tx.id,
