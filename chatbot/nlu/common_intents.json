@@ -70,6 +70,39 @@
             ]
         },
 
+        "Greeting": {
+            "responses": [
+                "Hi, how are you?"
+            ],
+            "is_greeting": true,
+            "utterances": [
+                "long time no see",
+                "hello",
+                "hi",
+                "howdy",
+                "hey there",
+                "hey",
+                "greetings",
+                "I greet you",
+                "hi there",
+                "hello there",
+                "lovely day isn't it",
+                "hello again",
+                "just going to say hi",
+                "a good day",
+                "afternoon",
+                "hello hi",
+                "heya"
+            ]
+
+        },
+
+        "Help": {
+            "is_repeatable": true,
+            "is_preemptive": true,
+            "is_answer": false
+        },
+
         "No": {
             "is_repeatable": true,
             "is_preemptive": true,
@@ -149,6 +182,32 @@
                 "no thanks not right now",
                 "no forget"
             ]
+        },
+
+        "Repeat": {
+            "is_repeatable": true,
+            "is_preemptive": true,
+            "is_answer": false
+        },
+
+        "Unsure": {
+            "is_repeatable": true,
+            "is_preemptive": true,
+            "is_answer": true,
+            "utterances": [
+                "maybe",
+                "im not sure",
+                "i dont know",
+                "im not sure about that",
+                "maybe not",
+                "it might be"
+            ]
+        },
+
+        "Why": {
+            "is_repeatable": true,
+            "is_preemptive": true,
+            "is_answer": false
         },
 
         "Yes": {
@@ -236,51 +295,6 @@
                 "yes for sure",
                 "all right"
             ]
-        },
-
-        "Greeting": {
-            "responses": [
-                "Hi, how are you?"
-            ],
-            "is_greeting": true,
-            "utterances": [
-                "long time no see",
-                "hello",
-                "hi",
-                "howdy",
-                "hey there",
-                "hey",
-                "greetings",
-                "I greet you",
-                "hi there",
-                "hello there",
-                "lovely day isn't it",
-                "hello again",
-                "just going to say hi",
-                "a good day",
-                "afternoon",
-                "hello hi",
-                "heya"
-            ]
-
-        },
-
-        "Help": {
-            "is_repeatable": true,
-            "is_preemptive": true,
-            "is_answer": false
-        },
-
-        "Repeat": {
-            "is_repeatable": true,
-            "is_preemptive": true,
-            "is_answer": false
-        },
-
-        "Why": {
-            "is_repeatable": true,
-            "is_preemptive": true,
-            "is_answer": false
         }
     }
 }

@@ -25,6 +25,7 @@ class CommonIntents(object):
     NoIntent = 'None' # TODO: This is specific to LUIS
     Repeat = 'Repeat'
     Greeting = 'Greeting'
+    Unsure = 'Unsure'
     Why = 'Why'
 
 class ResponseTypes(object):
