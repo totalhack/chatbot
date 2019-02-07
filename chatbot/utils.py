@@ -1,12 +1,7 @@
-from cachetools import TTLCache
-from collections import OrderedDict, MutableMapping
-import copy
-import datetime
-from dateutil import parser as dateparser
+from collections import OrderedDict, MutableMapping, Callable
 from functools import wraps
 from importlib import import_module
 import inspect
-import collections
 try:
     import simplejson as json
     from simplejson import JSONEncoder
@@ -14,16 +9,15 @@ except ImportError:
     print('WARNING: Failed to import simplejson, falling back to built-in json')
     import json
     from json import JSONEncoder
-import os
-from pprint import pprint, pformat
-import random
-import requests
+from pprint import pformat
 import string
 import sys
 import time
 
 import climax
+from dateutil import parser as dateparser
 from flask import Response, current_app
+import requests
 
 #-------- Command line utils
 
@@ -54,7 +48,7 @@ def prompt_user(msg, answers):
 #-------- Object utils
 
 def get_class_vars(cls):
-    return [i for i in dir(cls) if (not isinstance(i, collections.Callable)) and (not i.startswith('_'))]
+    return [i for i in dir(cls) if (not isinstance(i, Callable)) and (not i.startswith('_'))]
 
 def import_object(name):
     if '.' not in name:
@@ -127,11 +121,11 @@ class FontEffects:
     INVERTED = '\033[7m'
 
 def log(msg, label='parent', indent=0, color=None, autocolor=False, format_func=pformat):
-    if type(msg) not in (str, str):
+    if isinstance(msg, str):
         msg = pformat(msg)
 
     if indent is not None and int(indent):
-        sg = msg + (' ' * int(indent))
+        msg = msg + (' ' * int(indent))
 
     if label:
         if label == 'parent':
@@ -165,14 +159,14 @@ def warn(msg, label='WARNING'):
 def error(msg, label='ERROR'):
     log(msg, label=label, color='red')
 
-class PrintMixin(object):
+class PrintMixin():
     repr_attrs = []
 
     def __repr__(self):
         if self.repr_attrs:
-            return "<%s %s>" % (type(self).__name__, ' '.join(['%s=%s' % (field, getattr(self, field)) for field in self.repr_attrs]))
-        else:
-            return "<%s %s>" % (type(self).__name__, id(self))
+            return "<%s %s>" % (type(self).__name__, ' '.join(['%s=%s' % (field, getattr(self, field))
+                                                               for field in self.repr_attrs]))
+        return "<%s %s>" % (type(self).__name__, id(self))
 
     def __str__(self):
         return str(vars(self))
@@ -191,10 +185,11 @@ def string_has_format_args(s):
 
 # https://stackoverflow.com/questions/7204805/dictionaries-of-dictionaries-merge
 def dictmerge(x, y, path=None, overwrite=False):
-    if path is None: path = []
+    if path is None:
+        path = []
     for key in y:
         if key in x:
-            if (isinstance(x[key], dict) or isinstance(x[key], MutableMapping)) and (isinstance(y[key], dict) or isinstance(y[key], MutableMapping)):
+            if isinstance(x[key], (dict, MutableMapping)) and isinstance(y[key], (dict, MutableMapping)):
                 dictmerge(x[key], y[key], path + [str(key)], overwrite=overwrite)
             elif x[key] == y[key]:
                 pass # same leaf value
@@ -221,7 +216,7 @@ JSONEncoder.default = _default
 def jsonr(obj):
     return Response(json.dumps(obj), mimetype="application/json")
 
-class JSONMixin(object):
+class JSONMixin():
     # Probably needs a better home
     def to_dict(self):
         if isinstance(self, dict):

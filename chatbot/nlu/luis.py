@@ -1,5 +1,3 @@
-import requests
-
 from azure.cognitiveservices.language.luis.authoring import LUISAuthoringClient
 from azure.cognitiveservices.language.luis.authoring.models.application_publish_object import ApplicationPublishObject
 from azure.cognitiveservices.language.luis.authoring.models.example_label_object import ExampleLabelObject
@@ -7,8 +5,24 @@ from azure.cognitiveservices.language.luis.runtime import LUISRuntimeClient
 from msrest.authentication import CognitiveServicesCredentials
 from flask import current_app
 
-from chatbot.core import *
-from chatbot.utils import *
+from chatbot.core import (NLU,
+                          Application,
+                          ApplicationVersion,
+                          ApplicationTrainingStatus,
+                          ApplicationTrainingResult,
+                          ApplicationPublishResult,
+                          Entity,
+                          Intent,
+                          IntentResult,
+                          Utterance,
+                          get_nlu_cache)
+from chatbot.utils import (st,
+                           dbg,
+                           warn,
+                           parse_date,
+                           paged_call,
+                           paged_get,
+                           poll_call)
 
 PAGE_SIZE = 250
 RAW_INTENT_LIMIT = 10
@@ -27,7 +41,8 @@ def luis_predict(client, query, config=None, staging=True, verbose=True):
             dbg('Using cached NLU result for key %s' % str(key))
             return nlu_result
 
-    luis_result = client.prediction.resolve(config['luis_app_id'], query, verbose=verbose, staging=staging, timezone_offset='-300')
+    luis_result = client.prediction.resolve(config['luis_app_id'], query, verbose=verbose, staging=staging,
+                                            timezone_offset='-300')
     result = luis_result.as_dict()
 
     if nlu_cache is not None:
@@ -55,7 +70,8 @@ class LUISNLU(NLU):
 
     def paged_request(self, endpoint, *args, **kwargs):
         app_version = kwargs.get('app_version', self.app_version)
-        if 'app_version' in kwargs: del kwargs['app_version']
+        if 'app_version' in kwargs:
+            del kwargs['app_version']
         return paged_call(endpoint, 'take', 'skip', PAGE_SIZE, self.app_id, app_version, *args, **kwargs)
 
     def raw_api_request(self, template, **kwargs):
@@ -68,7 +84,8 @@ class LUISNLU(NLU):
 
     def raw_model_endpoint_request(self, model_id, endpoint, app_version=None):
         app_version = app_version or self.app_version
-        results = self.raw_api_request(MODEL_ENDPOINT_TEMPLATE, model_id=model_id, endpoint=endpoint, app_version=app_version)
+        results = self.raw_api_request(MODEL_ENDPOINT_TEMPLATE, model_id=model_id, endpoint=endpoint,
+                                       app_version=app_version)
         return results
 
     def get_raw_prediction(self, query, staging=True):
@@ -121,7 +138,8 @@ class LUISNLU(NLU):
 
     @classmethod
     def to_application_version(cls, result):
-        return ApplicationVersion(result.version, created_at=result.created_date_time, updated_at=result.last_modified_date_time)
+        return ApplicationVersion(result.version, created_at=result.created_date_time,
+                                  updated_at=result.last_modified_date_time)
 
     def get_application_versions(self):
         results = self.authoring_client.versions.list(self.app_id)
@@ -229,9 +247,9 @@ class LUISNLU(NLU):
     @classmethod
     def to_utterance(cls, result):
         if isinstance(result, dict):
-            return Utterance(result['text'], intent_name=result['intentLabel'], intent_api_id=result['intentId'], api_id=result['id'])
-        else:
-            return Utterance(result.text, intent_name=result.intentLabel, intent_api_id=result.intentId, api_id=result.id)
+            return Utterance(result['text'], intent_name=result['intentLabel'], intent_api_id=result['intentId'],
+                             api_id=result['id'])
+        return Utterance(result.text, intent_name=result.intentLabel, intent_api_id=result.intentId, api_id=result.id)
 
     def get_utterances(self, intent, app_version=None):
         app_version = app_version or self.app_version

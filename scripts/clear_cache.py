@@ -1,6 +1,6 @@
 from chatbot import app
-from chatbot.configs import *
-from chatbot.core import *
+from chatbot.configs import load_bot_configs
+from chatbot.core import get_nlu_cache, get_convo_cache, DiskCache
 
 load_bot_configs(app.config, load_tests=True)
 

@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 
+import climax
+
 from chatbot import app
-from chatbot.configs import *
-from chatbot.utils import *
+from chatbot.configs import load_bot_configs, get_bot_config, IntentConfigFileSchema, parse_schema_file
+from chatbot.core import get_nlu
+from chatbot.utils import st, dbg, cli, prompt_user
 
 load_bot_configs(app.config)
 
@@ -14,7 +17,7 @@ load_bot_configs(app.config)
 @climax.argument('--publish', action='store_true', help='Publish model after training', default=False)
 def main(f, bot, version, train, publish, dry_run, force):
     schema = IntentConfigFileSchema()
-    intent_configs = parse_schema_file(f, schema)
+    parse_schema_file(f, schema)
 
     bot_config = get_bot_config(bot)
     nlu = get_nlu(bot_config)

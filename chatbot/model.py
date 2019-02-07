@@ -5,13 +5,13 @@ from sqlalchemy.ext.declarative import declared_attr
 
 db = SQLAlchemy()
 
-class SaveMixin(object):
+class SaveMixin():
     save_attrs = []
 
     def get_save_data(self):
         return {key:getattr(self, key) for key in self.save_attrs}
 
-class TimestampMixin(object):
+class TimestampMixin():
     # https://stackoverflow.com/questions/3923910/sqlalchemy-move-mixin-columns-to-end
     @declared_attr
     def created_at(cls):

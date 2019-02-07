@@ -1,13 +1,25 @@
-from cachetools import LRUCache, TTLCache
+"""Core classes and functions"""
 from collections import OrderedDict
 import copy
+import datetime
+import random
 
+from cachetools import LRUCache, TTLCache
 from diskcache import Cache
 import requests
 import usaddress
 
-from chatbot.model import *
-from chatbot.utils import *
+from chatbot.model import db, Fulfillments
+from chatbot.utils import (dbg,
+                           st,
+                           json,
+                           get_class_vars,
+                           import_object,
+                           OrderedDictPlus,
+                           PrintMixin,
+                           JSONMixin,
+                           MappingMixin,
+                           initializer)
 
 CONVO_CACHE = None
 NLU_CACHE = None
@@ -17,7 +29,7 @@ DEFAULT_CONVO_CACHE_TTL = 3600*48
 DEFAULT_NLU_CACHE_SIZE = 1000
 DEFAULT_NLU_DISK_CACHE_TTL = 3600*24
 
-class CommonIntents(object):
+class CommonIntents():
     Cancel = 'Cancel'
     Yes = 'Yes'
     No = 'No'
@@ -28,12 +40,12 @@ class CommonIntents(object):
     Unsure = 'Unsure'
     Why = 'Why'
 
-class ResponseTypes(object):
+class ResponseTypes():
     Active = 'Active'
     Deferred = 'Deferred'
     Resumed = 'Resumed'
 
-class Actions(object):
+class Actions():
     CancelIntent = 'CancelIntent'
     ConfirmCancelIntent = 'ConfirmCancelIntent'
     ConfirmSwitchIntent = 'ConfirmSwitchIntent'
@@ -76,10 +88,10 @@ class Action(PrintMixin, JSONMixin, MappingMixin):
         if isinstance(definition, dict):
             self.name = definition['name']
             self.params = definition.get('params', {})
-        elif type(definition) == str:
+        elif isinstance(definition, str):
             self.name = definition
             self.params = {}
-        elif definition == None:
+        elif definition is None:
             self.name = None
             self.params = None
         else:
@@ -131,22 +143,21 @@ class Message(PrintMixin, JSONMixin, MappingMixin):
             return Message(message_dict['name'],
                            message_dict['prompts'],
                            action=message_dict.get('action', None))
-        elif message_type == 'question':
+        if message_type == 'question':
             return Question(message_dict['name'],
                             message_dict['prompts'],
                             intent_actions=ActionMap(message_dict.get('intent_actions', {})),
                             entity_actions=ActionMap(message_dict.get('entity_actions', {})),
                             help=message_dict.get('help', None),
                             why=message_dict.get('why', None))
-        elif message_type == 'slot':
+        if message_type == 'slot':
             return Slot(message_dict['name'],
                         message_dict['prompts'],
                         entity_handler_name=message_dict.get('entity_handler_name', None),
                         follow_up=message_dict.get('follow_up', None),
                         help=message_dict.get('help', None),
                         why=message_dict.get('why', None))
-        else:
-            assert False, 'Invalid message type: %s' % message_type
+        assert False, 'Invalid message type: %s' % message_type
 
     @classmethod
     def create(cls, name, message):
@@ -181,7 +192,8 @@ class MessageMap(JSONMixin, MappingMixin):
 
 class ResponseMap(MessageMap):
     def __setitem__(self, key, value):
-        assert key in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred), 'Invalid response type: %s' % key
+        assert key in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred),\
+            'Invalid response type: %s' % key
         super(ResponseMap, self).__setitem__(key, value)
 
     def get_response(self, rtype):
@@ -198,10 +210,12 @@ class Question(Message):
         self.help = help
         self.why = why
         if intent_actions:
-            assert isinstance(intent_actions, ActionMap), 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
+            assert isinstance(intent_actions, ActionMap),\
+                'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
         self.entity_actions = entity_actions
         if entity_actions:
-            assert isinstance(entity_actions, ActionMap), 'Invalid type for entity_actions, must be dict: %s' % type(entity_actions)
+            assert isinstance(entity_actions, ActionMap),\
+                'Invalid type for entity_actions, must be dict: %s' % type(entity_actions)
 
     def get_intent_actions(self):
         return self.intent_actions
@@ -242,18 +256,19 @@ class Slot(Question):
         help = slot_info.get('help', None)
         why = slot_info.get('why', None)
 
-        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up, autofill=autofill, help=help, why=why)
+        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up,
+                   autofill=autofill, help=help, why=why)
 
     def __init__(self, name, prompts, entity_handler_name=None, follow_up=None, autofill=None, help=None, why=None):
         # TODO: should slot be filled by an action? Allow overriding intent/entity actions for slots?
         entity_actions = ActionMap({name: Actions.NoAction})
         super(Slot, self).__init__(name, prompts, entity_actions=entity_actions, help=help, why=why)
         if entity_handler_name:
-            assert type(entity_handler_name) == str, 'Invalid entity handler: %s' % entity_handler_name
+            assert isinstance(entity_handler_name, str), 'Invalid entity handler: %s' % entity_handler_name
         self.entity_handler_name = entity_handler_name
         self.follow_up = follow_up
         if follow_up:
-            assert type(follow_up) == FollowUp
+            assert isinstance(follow_up, FollowUp)
         self.autofill = autofill
 
     def get_follow_up_prompt(self):
@@ -297,7 +312,8 @@ class FollowUp(Question):
 
     @classmethod
     def from_dict(cls, slot_name, follow_up_info):
-        assert isinstance(follow_up_info, dict), 'Invalid type for follow up info, must be dict: %s' % type(follow_up_info)
+        assert isinstance(follow_up_info, dict),\
+            'Invalid type for follow up info, must be dict: %s' % type(follow_up_info)
         follow_up = None
         if follow_up_info:
             follow_up_name = '%s_follow_up' % slot_name
@@ -367,7 +383,6 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
 
         dbg('Handling fulfillment for intent %s: %s' % (self.name, self.fulfillment))
         url = self.fulfillment['url']
-        headers = {'Content-type': 'application/json'}
         status_code = None
 
         fulfillment_data = self.get_fulfillment_data(convo, tx, slot_data)
@@ -522,13 +537,13 @@ class FulfillmentResponse(PrintMixin, JSONMixin, MappingMixin):
 
     @initializer
     def __init__(self, name, status=None, status_reason=None, message=None, action=None):
-        assert status and type(status) == str, 'Invalid status: %s' % status
+        assert status and isinstance(status, str), 'Invalid status: %s' % status
 
         if action and not isinstance(action, Action):
             self.action = Action(action)
 
         if message:
-            if type(message) in (str, str):
+            if isinstance(message, str):
                 self.message = Message(name, [message])
             elif isinstance(message, dict):
                 message['name'] = message.get('name', name)
@@ -581,7 +596,8 @@ class Application(PrintMixin, MappingMixin):
     repr_attrs = ['id', 'name', 'version']
 
     @initializer
-    def __init__(self, id, name, version, description=None, created_at=None, production_endpoint=None, staging_endpoint=None):
+    def __init__(self, id, name, version, description=None, created_at=None,
+                 production_endpoint=None, staging_endpoint=None):
         if created_at:
             assert isinstance(created_at, datetime.date), 'Invalid created_at date object: %s' % created_at
 
@@ -629,12 +645,12 @@ class Utterance(PrintMixin, MappingMixin):
     def __init__(self, name, intent_name=None, intent_api_id=None, api_id=None):
         pass
 
-class NLU(object):
+class NLU():
     @initializer
     def __init__(self, config):
         pass
 
-    def get_raw_prediction(self, query):
+    def get_raw_prediction(self, query, staging=True):
         raise NotImplementedError
 
     def get_intent_results_from_raw_response(self, raw):
@@ -673,39 +689,39 @@ class NLU(object):
     def clone_current_version(self, new_version):
         raise NotImplementedError
 
-    def get_application_training_status(self):
+    def get_application_training_status(self, app_version=None):
         raise NotImplementedError
 
-    def train(self):
+    def train(self, asynchronous=True, app_version=None):
         raise NotImplementedError
 
-    def publish(self):
+    def publish(self, is_staging=True, region=None, app_version=None):
         raise NotImplementedError
 
-    def get_entity(self, id):
+    def get_entity(self, id, app_version=None):
         raise NotImplementedError
 
-    def get_entities(self):
+    def get_entities(self, app_version=None):
         raise NotImplementedError
 
-    def get_intent(self, id):
+    def get_intent(self, id, app_version=None):
         raise NotImplementedError
 
-    def get_intents(self):
+    def get_intents(self, app_version=None):
         raise NotImplementedError
 
-    def add_intent(self, name, utterances):
+    def add_intent(self, name, app_version=None):
         raise NotImplementedError
 
-    def get_utterances(self, intent):
+    def get_utterances(self, intent, app_version=None):
         raise NotImplementedError
 
-    def add_utterance(self, intent, text):
+    def add_utterance(self, intent, utterance, app_version=None):
         raise NotImplementedError
 
 #---- Cache Stuff
 
-class DiskCache(object):
+class DiskCache():
     def __init__(self, cache_dir, ttl=None):
         self.ttl = ttl
         self.cache = Cache(cache_dir, eviction_policy='least-recently-used')

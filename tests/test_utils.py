@@ -1,6 +1,6 @@
 import unittest
 
-from chatbot.utils import *
+from chatbot.utils import st, dbg
 
 class TestBase(unittest.TestCase):
     DEBUG = False
@@ -22,4 +22,4 @@ def run_tests(testclass, testnames, debug=False):
             suite.addTest(testclass(testname))
     else:
         suite = unittest.TestLoader().loadTestsFromTestCase(testclass)
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    unittest.TextTestRunner(verbosity=2).run(suite)

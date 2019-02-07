@@ -1,12 +1,27 @@
+"""Config checking and generation"""
 from collections import OrderedDict
 import copy
 import glob
+import os
 from urllib.parse import urlparse
 
 from marshmallow import Schema, fields, ValidationError
 
-from chatbot.core import *
-from chatbot.utils import *
+from chatbot.core import (Actions,
+                          CommonIntents,
+                          ResponseTypes,
+                          Intent,
+                          MessageMap)
+from chatbot.utils import (dbg,
+                           error,
+                           json,
+                           st,
+                           initializer,
+                           dictmerge,
+                           get_class_vars,
+                           JSONMixin,
+                           MappingMixin)
+
 
 BOT_CONFIGS = {}
 COMMON_INTENT_CONFIGS = {}
@@ -97,11 +112,13 @@ def is_main_config_file(filename):
     return False
 
 def parse_schema_file(filename, schema):
+    """Parse a marshmallow schema file"""
     f = open(filename)
     raw = f.read()
     f.close()
     try:
-        result = schema.loads(raw) # This does the schema check, but has a bug in object_pairs_hook so order is not preserved
+        # This does the schema check, but has a bug in object_pairs_hook so order is not preserved
+        result = schema.loads(raw)
         result = json.loads(raw, object_pairs_hook=OrderedDict)
     except ValidationError as e:
         error('Schema Validation Error')
@@ -116,11 +133,13 @@ def get_bot_config(bot):
     return BOT_CONFIGS[bot]
 
 def check_bot_intent_configs(bot_intent_configs):
-    # Additional checks to enforce supported behavior
+    """Additional checks to enforce supported behavior"""
     for intent_name, intent_config in bot_intent_configs.items():
-        assert 'is_preemptive' not in intent_config, 'Preemptive bot intents are not currently supported: %s' % intent_name
+        assert 'is_preemptive' not in intent_config,\
+            'Preemptive bot intents are not currently supported: %s' % intent_name
 
 def convert_to_intent_objects(intent_configs, entity_handlers):
+    """Convert intent configs dicts to Intent objects"""
     for name, intent_config in intent_configs.items():
         kwargs = copy.deepcopy(intent_config)
         kwargs['entity_handlers'] = kwargs.get('entity_handlers', entity_handlers)
@@ -130,16 +149,18 @@ def convert_to_intent_objects(intent_configs, entity_handlers):
         intent_configs[name] = intent
 
 def clear_utterances(intent_configs):
-    # When loading bot configs for conversation flow we dont need this information
-    for intent_name, intent_config in intent_configs.items():
+    """Remove utterance section from intent configs"""
+    for intent_config in intent_configs.values():
         if 'utterances' in intent_config:
             del intent_config['utterances']
 
 def update_intents(intent_configs, update_dict):
-    for intent_name, intent_config in intent_configs.items():
+    """Perform a dict update on each intent config"""
+    for intent_config in intent_configs.values():
         intent_config.update(copy.deepcopy(update_dict))
 
 class BotConfig(JSONMixin, MappingMixin):
+    """Holds all configuration information for a bot"""
     @initializer
     def __init__(self, name, intent_configs, entity_handlers, common_messages, nlu_class, nlu_config,
                  intent_filter_threshold=DEFAULT_INTENT_FILTER_THRESHOLD,
@@ -152,6 +173,7 @@ class BotConfig(JSONMixin, MappingMixin):
         pass
 
     def merge_dict(self, bot_config_dict):
+        """Merge this config with another dict-based config"""
         result = dictmerge(copy.deepcopy(self), bot_config_dict, overwrite=True)
         # The above is sufficient if the new dict only has updates to existing objects
         # or updates to built-in types. If it has a new value for a complex object
@@ -165,11 +187,13 @@ class BotConfig(JSONMixin, MappingMixin):
         return result
 
 class BotConfigLoader(JSONMixin):
+    """Helpers for loading bot configs"""
     def __init__(self, app_config):
         self.app_config = app_config
         self.configs = {}
 
     def load_bot_configs(self, load_tests=False, load_utterances=False):
+        """Load bot configs based on app config settings"""
         load_common_intent_configs()
 
         if self.app_config.get('BOT_CONFIG_DIRECTORY', None):
@@ -179,8 +203,8 @@ class BotConfigLoader(JSONMixin):
 
         if self.app_config['DEBUG'] and self.app_config.get('test_base_url', None):
             print('Overriding fulfillment base URLs with TEST_BASE_URL: %s' % self.app_config['TEST_BASE_URL'])
-            for bot, bot_config in self.configs.items():
-                for intent_name, intent in bot_config.intent_configs.items():
+            for bot_config in self.configs.values():
+                for intent in bot_config.intent_configs.values():
                     if intent.fulfillment and intent.fulfillment.get('url', None):
                         parsed = urlparse(intent.fulfillment['url'])
                         url = self.app_config['TEST_BASE_URL'] + parsed.path
@@ -189,6 +213,7 @@ class BotConfigLoader(JSONMixin):
                         intent.fulfillment['url'] = url
 
     def load_bot_configs_from_directory(self, load_tests=False, load_utterances=False):
+        """Load bot configs from app config directory"""
         directory = self.app_config['BOT_CONFIG_DIRECTORY'].rstrip('/')
         files = glob.glob("%s/*.json" % directory)
         bot_file_schema = BotConfigFileSchema()
@@ -219,7 +244,8 @@ class BotConfigLoader(JSONMixin):
             if not smalltalk_intent_configs:
                 result = parse_schema_file(SMALLTALK_INTENT_FILE, intent_file_schema)
                 smalltalk_intent_configs = result['intent_configs']
-                update_intents(smalltalk_intent_configs, {'is_smalltalk': True, 'is_repeatable': True, 'is_preemptive': True})
+                update = {'is_smalltalk': True, 'is_repeatable': True, 'is_preemptive': True}
+                update_intents(smalltalk_intent_configs, update)
             intent_configs.update(smalltalk_intent_configs)
 
             if not load_utterances:
@@ -234,12 +260,15 @@ class BotConfigLoader(JSONMixin):
                 common_messages,
                 bot_config.get('nlu_class', self.app_config.get('NLU_CLASS', DEFAULT_NLU_CLASS)),
                 bot_config.get('nlu_config', self.app_config['NLU_CONFIG']),
-                new_intent_limit=bot_config.get('new_intent_limit', self.app_config.get('NEW_INTENT_LIMIT', DEFAULT_NEW_INTENT_LIMIT)),
+                new_intent_limit=bot_config.get('new_intent_limit',
+                                                self.app_config.get('NEW_INTENT_LIMIT', DEFAULT_NEW_INTENT_LIMIT)),
                 intent_filter_threshold=bot_config.get('intent_filter_threshold', DEFAULT_INTENT_FILTER_THRESHOLD),
                 entity_filter_threshold=bot_config.get('entity_filter_threshold', DEFAULT_ENTITY_FILTER_THRESHOLD),
                 max_question_attempts=bot_config.get('max_question_attempts', DEFAULT_MAX_QUESTION_ATTEMPTS),
-                max_consecutive_message_attempts=bot_config.get('max_consecutive_message_attempts', DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS),
-                max_consecutive_repeat_attempts=bot_config.get('max_consecutive_repeat_attempts', DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS),
+                max_consecutive_message_attempts=bot_config.get('max_consecutive_message_attempts',
+                                                                DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS),
+                max_consecutive_repeat_attempts=bot_config.get('max_consecutive_repeat_attempts',
+                                                               DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS),
                 smalltalk=bot_config.get('smalltalk', False),
                 tests=bot_config.get('tests', {}) if load_tests else {}
             )
@@ -249,11 +278,13 @@ class BotConfigLoader(JSONMixin):
         dbg('Loaded %d bot configs' % count)
 
 def load_common_intent_configs():
+    """Load common intent configs from JSON file"""
     schema = IntentConfigFileSchema()
     result = parse_schema_file(COMMON_INTENT_FILE, schema)
     COMMON_INTENT_CONFIGS.update(result['intent_configs'])
 
 def load_bot_configs(app_config, load_tests=False):
+    """Helper for loading bot configs and updating global reference"""
     if not BOT_CONFIGS:
         loader = BotConfigLoader(app_config)
         loader.load_bot_configs(load_tests=load_tests)
@@ -262,7 +293,7 @@ def load_bot_configs(app_config, load_tests=False):
 #-------- Schema Validation
 
 def is_int_greater_or_equal_to_one(val):
-    if type(val) != int:
+    if not isinstance(val, int):
         raise ValidationError('Must be an integer >= 1: %s' % val)
     if val >= 1:
         return True
@@ -272,7 +303,7 @@ def is_zero_to_one(val):
     if val is None:
         raise ValidationError('Must be a number between 0 and 1: %s' % val)
     val = float(val)
-    if val >=0 and val <= 1:
+    if 0 <= val <= 1:
         return True
     raise ValidationError('Must be a number between 0 and 1: %s' % val)
 
@@ -283,12 +314,12 @@ def is_valid_response_type(val):
     raise ValidationError('Invalid response type: %s' % val)
 
 def is_valid_response(val):
-    if type(val) == list:
-        if not all([type(x) == str for x in val]):
+    if isinstance(val, list):
+        if not all([isinstance(x, str) for x in val]):
             raise ValidationError('Invalid Responses format: %s' % val)
     elif isinstance(val, dict):
         schema = ResponsesSchema()
-        result = schema.load(val)
+        schema.load(val)
     else:
         raise ValidationError('Invalid Responses format: %s' % val)
 
@@ -296,7 +327,7 @@ def is_valid_action(val):
     actions = get_class_vars(Actions)
     if isinstance(val, dict):
         schema = ActionSchema()
-        result = schema.load(val)
+        schema.load(val)
         if val['name'] in actions:
             return True
     else:
@@ -305,18 +336,18 @@ def is_valid_action(val):
     raise ValidationError('Invalid action: %s' % val)
 
 def is_valid_message(val):
-    if type(val) == list:
-        if not all([type(x) == str for x in val]):
+    if isinstance(val, list):
+        if not all([isinstance(x, str) for x in val]):
             raise ValidationError('Invalid Message format: %s' % val)
     elif isinstance(val, dict):
         schema = MessageSchema()
-        result = schema.load(val)
+        schema.load(val)
     else:
         raise ValidationError('Invalid Message format: %s' % val)
 
 class BaseSchema(Schema):
     class Meta:
-        # The json module as imported from utils
+        # Use the json module as imported from utils
         json_module = json
 
 class ActionSchema(BaseSchema):
@@ -325,7 +356,7 @@ class ActionSchema(BaseSchema):
 
 class ActionField(fields.Field):
     def _validate(self, value):
-        result = is_valid_action(value)
+        is_valid_action(value)
         super(ActionField, self)._validate(value)
 
 class MessageSchema(BaseSchema):
@@ -339,7 +370,7 @@ class MessageSchema(BaseSchema):
 
 class MessageField(fields.Field):
     def _validate(self, value):
-        result = is_valid_message(value)
+        is_valid_message(value)
         super(MessageField, self)._validate(value)
 
 class ResponsesSchema(BaseSchema):
@@ -349,7 +380,7 @@ class ResponsesSchema(BaseSchema):
 
 class ResponsesField(fields.Field):
     def _validate(self, value):
-        result = is_valid_response(value)
+        is_valid_response(value)
         super(ResponsesField, self)._validate(value)
 
 class SlotFollowUpSchema(BaseSchema):

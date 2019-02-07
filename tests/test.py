@@ -1,14 +1,12 @@
 from collections import OrderedDict
-from pprint import pprint
-import random
+
+import climax
 import requests
-import sys
-import unittest
 
 from chatbot import app
-from chatbot.configs import *
-from chatbot.utils import *
-from test_utils import *
+from chatbot.configs import load_bot_configs, get_all_bot_configs
+from chatbot.utils import st, json, testcli
+from test_utils import TestBase, run_tests
 
 load_bot_configs(app.config, load_tests=True)
 
@@ -18,7 +16,8 @@ def make_request(bot, input_data, convo_id=None, intent_configs=None):
     data = {'debug': 1,
             'bot': bot,
             'input': json.dumps(input_data)}
-    if convo_id: data['conversation_id'] = convo_id
+    if convo_id:
+        data['conversation_id'] = convo_id
     if intent_configs:
         data['bot_config'] = json.dumps({'intent_configs': intent_configs})
     resp = requests.post(TEST_BASE_URL + '/chat', data=data)
@@ -33,7 +32,7 @@ def clean_name(name):
 
 # https://stackoverflow.com/questions/32899/how-do-you-generate-dynamic-parametrized-unit-tests-in-python
 class TestChatBotMeta(type):
-    def __new__(mcs, name, bases, test_dict):
+    def __new__(cls, name, bases, test_dict):
         def gen_test(bot, convo):
             def test(self):
                 self.converse(bot, convo)
@@ -44,7 +43,7 @@ class TestChatBotMeta(type):
                 test_name = "test%s%s" % (clean_name(bot).title(), clean_name(tname))
                 test_dict[test_name] = gen_test(bot, convo)
 
-        return type.__new__(mcs, name, bases, test_dict)
+        return type.__new__(cls, name, bases, test_dict)
 
 class TestChatBot(TestBase, metaclass=TestChatBotMeta):
     def setUp(self):
@@ -55,7 +54,7 @@ class TestChatBot(TestBase, metaclass=TestChatBotMeta):
 
     def converse(self, bot, convo):
         print('---- Bot: %s Convo ID: %s' % (bot, self.convo_id))
-        for i, message_tuple in enumerate(convo):
+        for message_tuple in convo:
             expected_intent = None
             expected_message_name = None
             intent_configs = {}

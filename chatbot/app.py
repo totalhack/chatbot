@@ -1,15 +1,14 @@
-from collections import OrderedDict
-from pprint import pprint
-
-from flask import render_template, request, Response
-import requests
+"""App server with chat() endpoint"""
 import traceback
 
+from flask import request
+
 from chatbot import app
-from chatbot.configs import *
-from chatbot.conversation import *
-from chatbot.core import *
-from chatbot.utils import *
+from chatbot.configs import load_bot_configs
+from chatbot.conversation import Conversation
+from chatbot.core import Actions, CommonIntents, get_convo_cache, setup_caching
+from chatbot.model import db
+from chatbot.utils import dbg, warn, error, json, jsonr, st
 
 db.init_app(app)
 load_bot_configs(app.config)
@@ -17,6 +16,7 @@ setup_caching(app.config)
 
 @app.route('/chat', methods=['POST'])
 def chat():
+    """Converse with a bot"""
     try:
         input = json.loads(request.values['input'])
         bot = request.values['bot']
@@ -32,10 +32,12 @@ def chat():
         if convo_id:
             convo = convo_cache.get(convo_id, None)
             if not convo:
-                response = {'status': 'error', 'response': 'No conversation found for ID %s' % convo_id}
+                response = {'status': 'error',
+                            'response': 'No conversation found for ID %s' % convo_id}
                 return jsonr(response)
             if convo.completed:
-                response = {'status': 'error', 'response': 'Conversation %s is already completed' % convo_id}
+                response = {'status': 'error',
+                            'response': 'Conversation %s is already completed' % convo_id}
                 return jsonr(response)
         else:
             dbg('Creating new conversation')
@@ -51,6 +53,10 @@ def chat():
         convo.save()
         tx.save()
 
+        fulfillment_data = None
+        if tx.completed_intent_name:
+            fulfillment_data = convo.get_fulfillment_data(tx, tx.completed_intent_name)
+
         convo_cache[convo_id] = convo
         response = {'status': 'success',
                     'response': reply,
@@ -58,7 +64,7 @@ def chat():
                     'transaction_id': tx.id,
                     'completed_intent_name': tx.completed_intent_name,
                     'completed_conversation': convo.completed,
-                    'fulfillment_data': convo.get_fulfillment_data(tx, tx.completed_intent_name) if tx.completed_intent_name else None}
+                    'fulfillment_data': fulfillment_data}
         if app.config['DEBUG']:
             response['transaction'] = tx
         return jsonr(response)
@@ -75,6 +81,7 @@ def chat():
 
 @app.route('/fulfillment', methods=['POST'])
 def fulfillment():
+    """Example fulfillment"""
     data = request.json
     dbg('fulfillment called')
     dbg(data)
@@ -83,6 +90,7 @@ def fulfillment():
 
 @app.route('/fulfillment_with_message', methods=['POST'])
 def fulfillment_with_message():
+    """Example fulfillment with a message response"""
     data = request.json
     dbg('fulfillment_with_message called')
     dbg(data)
@@ -91,6 +99,7 @@ def fulfillment_with_message():
 
 @app.route('/fulfillment_with_question', methods=['POST'])
 def fulfillment_with_question():
+    """Example fulfillment with a question response"""
     data = request.json
     dbg('fulfillment_with_question called')
     dbg(data)
@@ -104,6 +113,7 @@ def fulfillment_with_question():
 
 @app.route('/fulfillment_with_action', methods=['POST'])
 def fulfillment_with_action():
+    """Example fulfillment with an action response"""
     data = request.json
     dbg('fulfillment_with_action called')
     dbg(data)
@@ -112,6 +122,7 @@ def fulfillment_with_action():
 
 @app.route('/fulfillment_with_error_status', methods=['POST'])
 def fulfillment_with_error_status():
+    """Example fulfillment with an error response"""
     data = request.json
     dbg('fulfillment_with_error_status called')
     dbg(data)
