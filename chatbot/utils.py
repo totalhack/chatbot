@@ -121,7 +121,7 @@ class FontEffects:
     INVERTED = '\033[7m'
 
 def log(msg, label='parent', indent=0, color=None, autocolor=False, format_func=pformat):
-    if isinstance(msg, str):
+    if not isinstance(msg, str):
         msg = pformat(msg)
 
     if indent is not None and int(indent):

@@ -11,6 +11,7 @@ from chatbot.core import (Question,
                           MessageGroup,
                           CommonIntents,
                           ResponseTypes,
+                          TriggeredIntentPrediction,
                           get_nlu)
 from chatbot.model import db, Transactions, Conversations, SaveMixin
 from chatbot.utils import (PrintMixin,
