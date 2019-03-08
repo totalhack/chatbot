@@ -3,7 +3,7 @@
     "entity_filter_threshold": 0.50,
     "new_intent_limit": 2,
     "max_question_attempts": 2,
-    "max_consecutive_message_attempts": 2,
+    "max_consecutive_interaction_attempts": 2,
     "max_consecutive_repeat_attempts": 2,
 
     "smalltalk": false,

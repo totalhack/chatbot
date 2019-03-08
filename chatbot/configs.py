@@ -8,10 +8,9 @@ from urllib.parse import urlparse
 from marshmallow import Schema, fields, ValidationError
 
 from chatbot.core import (Actions,
-                          CommonIntents,
                           ResponseTypes,
                           Intent,
-                          MessageMap)
+                          InteractionMap)
 from chatbot.utils import (dbg,
                            error,
                            json,
@@ -22,84 +21,20 @@ from chatbot.utils import (dbg,
                            JSONMixin,
                            MappingMixin)
 
-
 BOT_CONFIGS = {}
 COMMON_INTENT_CONFIGS = {}
 COMMON_INTENT_FILE = os.path.join(os.path.dirname(__file__), 'nlu/common_intents.json')
 SMALLTALK_INTENT_FILE = os.path.join(os.path.dirname(__file__), 'nlu/smalltalk_intents.json')
+COMMON_INTERACTIONS = {}
+COMMON_INTERACTIONS_FILE = os.path.join(os.path.dirname(__file__), 'nlu/common_interactions.json')
 
 DEFAULT_NLU_CLASS = 'chatbot.nlu.luis.LUISNLU'
 DEFAULT_NEW_INTENT_LIMIT = 2 # TODO: not all NLUs will support returning multiple intents
 DEFAULT_INTENT_FILTER_THRESHOLD = 0.50
 DEFAULT_ENTITY_FILTER_THRESHOLD = 0.50
 DEFAULT_MAX_QUESTION_ATTEMPTS = 2
-DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS = 2
+DEFAULT_MAX_CONSECUTIVE_INTERACTION_ATTEMPTS = 2
 DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS = 2
-
-COMMON_MESSAGES = {
-    'fallback': [
-        "Sorry, I didn't get that",
-    ],
-
-    'goodbye': [
-        "Thanks. Have a nice day!"
-    ],
-
-    'greeting': [
-        "Hi",
-        "Hello, and welcome to A B C"
-    ],
-
-    'help': [
-        "This is the global help message",
-    ],
-
-
-    'initial_prompt': [
-        "How can I help you today?"
-    ],
-
-    'intents_complete': {
-        'prompts': [
-            "Is there anything else I can help you with today?",
-        ],
-        'intent_actions': {CommonIntents.Yes: Actions.NoAction,
-                           CommonIntents.No: Actions.EndConversation}
-    },
-
-    'intent_aborted': {
-        'prompts': ["I'm sorry, I'm unable to help you at this time"],
-        'action': Actions.EndConversation,
-    },
-
-    'cancel_intent?': {
-        'prompts': [
-            "Are you sure you want to cancel the current intent?",
-        ],
-        'intent_actions': {CommonIntents.Yes: Actions.CancelIntent,
-                           CommonIntents.No: Actions.NoAction}
-    },
-
-    'message_exhausted': {
-        'prompts': ["I'm sorry, I'm unable to help you at this time"],
-        'action': Actions.EndConversation,
-    },
-
-    'repeat_exhausted': {
-        'prompts': ["I'm sorry, I'm unable to help you right now"],
-        'action': Actions.EndConversation,
-    },
-
-    'unanswered': [
-        "Sorry, I didn't get that",
-        "Sorry, I couldn't understand your answer"
-    ],
-
-    'why': [
-        "This is the global why message",
-    ],
-
-}
 
 COMMON_ENTITY_HANDLERS = {
     'address': 'AddressEntityHandler',
@@ -162,12 +97,12 @@ def update_intents(intent_configs, update_dict):
 class BotConfig(JSONMixin, MappingMixin):
     """Holds all configuration information for a bot"""
     @initializer
-    def __init__(self, name, intent_configs, entity_handlers, common_messages, nlu_class, nlu_config,
+    def __init__(self, name, intent_configs, entity_handlers, common_interactions, nlu_class, nlu_config,
                  intent_filter_threshold=DEFAULT_INTENT_FILTER_THRESHOLD,
                  entity_filter_threshold=DEFAULT_ENTITY_FILTER_THRESHOLD,
                  new_intent_limit=DEFAULT_NEW_INTENT_LIMIT,
                  max_question_attempts=DEFAULT_MAX_QUESTION_ATTEMPTS,
-                 max_consecutive_message_attempts=DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS,
+                 max_consecutive_interaction_attempts=DEFAULT_MAX_CONSECUTIVE_INTERACTION_ATTEMPTS,
                  max_consecutive_repeat_attempts=DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS,
                  smalltalk=False, tests=None):
         pass
@@ -195,6 +130,7 @@ class BotConfigLoader(JSONMixin):
     def load_bot_configs(self, load_tests=False, load_utterances=False):
         """Load bot configs based on app config settings"""
         load_common_intent_configs()
+        load_common_interactions()
 
         if self.app_config.get('BOT_CONFIG_DIRECTORY', None):
             self.load_bot_configs_from_directory(load_tests=load_tests, load_utterances=load_utterances)
@@ -229,10 +165,10 @@ class BotConfigLoader(JSONMixin):
             bot_entity_handlers = bot_config.get('entity_handlers', {})
             entity_handlers.update(bot_entity_handlers)
 
-            common_messages = copy.deepcopy(COMMON_MESSAGES)
-            bot_common_messages = bot_config.get('common_messages', {})
-            common_messages.update(bot_common_messages)
-            common_messages = MessageMap(common_messages)
+            common_interactions = copy.deepcopy(COMMON_INTERACTIONS)
+            bot_common_interactions = bot_config.get('common_interactions', {})
+            common_interactions.update(bot_common_interactions)
+            common_interactions = InteractionMap(common_interactions)
 
             intent_configs = copy.deepcopy(COMMON_INTENT_CONFIGS)
             bot_intent_configs = bot_config.get('intent_configs', {})
@@ -257,7 +193,7 @@ class BotConfigLoader(JSONMixin):
                 bot_name,
                 intent_configs,
                 entity_handlers,
-                common_messages,
+                common_interactions,
                 bot_config.get('nlu_class', self.app_config.get('NLU_CLASS', DEFAULT_NLU_CLASS)),
                 bot_config.get('nlu_config', self.app_config['NLU_CONFIG']),
                 new_intent_limit=bot_config.get('new_intent_limit',
@@ -265,8 +201,8 @@ class BotConfigLoader(JSONMixin):
                 intent_filter_threshold=bot_config.get('intent_filter_threshold', DEFAULT_INTENT_FILTER_THRESHOLD),
                 entity_filter_threshold=bot_config.get('entity_filter_threshold', DEFAULT_ENTITY_FILTER_THRESHOLD),
                 max_question_attempts=bot_config.get('max_question_attempts', DEFAULT_MAX_QUESTION_ATTEMPTS),
-                max_consecutive_message_attempts=bot_config.get('max_consecutive_message_attempts',
-                                                                DEFAULT_MAX_CONSECUTIVE_MESSAGE_ATTEMPTS),
+                max_consecutive_interaction_attempts=bot_config.get('max_consecutive_interaction_attempts',
+                                                                    DEFAULT_MAX_CONSECUTIVE_INTERACTION_ATTEMPTS),
                 max_consecutive_repeat_attempts=bot_config.get('max_consecutive_repeat_attempts',
                                                                DEFAULT_MAX_CONSECUTIVE_REPEAT_ATTEMPTS),
                 smalltalk=bot_config.get('smalltalk', False),
@@ -282,6 +218,12 @@ def load_common_intent_configs():
     schema = IntentConfigFileSchema()
     result = parse_schema_file(COMMON_INTENT_FILE, schema)
     COMMON_INTENT_CONFIGS.update(result['intent_configs'])
+
+def load_common_interactions():
+    """Load common interaction configs from JSON file"""
+    schema = InteractionFileSchema()
+    result = parse_schema_file(COMMON_INTERACTIONS_FILE, schema)
+    COMMON_INTERACTIONS.update(result['interactions'])
 
 def load_bot_configs(app_config, load_tests=False):
     """Helper for loading bot configs and updating global reference"""
@@ -336,14 +278,32 @@ def is_valid_action(val):
     raise ValidationError('Invalid action: %s' % val)
 
 def is_valid_message(val):
-    if isinstance(val, list):
-        if not all([isinstance(x, str) for x in val]):
-            raise ValidationError('Invalid Message format: %s' % val)
-    elif isinstance(val, dict):
-        schema = MessageSchema()
+    if isinstance(val, str):
+        return
+
+    if isinstance(val, dict):
+        message_type = (val.get('type', None) or '').lower()
+        if not message_type:
+            raise ValidationError('Message does not specify type: %s' % val)
+        if message_type == 'text':
+            schema = TextMessageSchema()
+        elif message_type == 'button':
+            schema = ButtonMessageSchema()
+        else:
+            raise ValidationError('Invalid Message type: %s' % message_type)
         schema.load(val)
     else:
         raise ValidationError('Invalid Message format: %s' % val)
+
+def is_valid_interaction(val):
+    if isinstance(val, list):
+        if not all([isinstance(x, str) for x in val]):
+            raise ValidationError('Invalid Interaction format: %s' % val)
+    elif isinstance(val, dict):
+        schema = InteractionSchema()
+        schema.load(val)
+    else:
+        raise ValidationError('Invalid Interaction format: %s' % val)
 
 class BaseSchema(Schema):
     class Meta:
@@ -359,24 +319,37 @@ class ActionField(fields.Field):
         is_valid_action(value)
         super(ActionField, self)._validate(value)
 
-class MessageSchema(BaseSchema):
-    prompts = fields.List(fields.Str())
-    help = fields.List(fields.Str())
-    why = fields.List(fields.Str())
-    entity_actions = fields.Dict(keys=fields.Str(), values=ActionField())
-    # TODO: validate it is a valid intent
-    intent_actions = fields.Dict(keys=fields.Str(), values=ActionField())
-    action = ActionField()
+class TextMessageSchema(BaseSchema):
+    type = fields.Str(required=True)
+    text = fields.Str(required=True)
+
+class ButtonMessageSchema(BaseSchema):
+    type = fields.Str(required=True)
+    label = fields.Str(required=True)
 
 class MessageField(fields.Field):
     def _validate(self, value):
         is_valid_message(value)
         super(MessageField, self)._validate(value)
 
+class InteractionSchema(BaseSchema):
+    messages = fields.List(MessageField())
+    help = fields.List(MessageField())
+    why = fields.List(MessageField())
+    entity_actions = fields.Dict(keys=fields.Str(), values=ActionField())
+    # TODO: validate it is a valid intent
+    intent_actions = fields.Dict(keys=fields.Str(), values=ActionField())
+    action = ActionField()
+
+class InteractionField(fields.Field):
+    def _validate(self, value):
+        is_valid_interaction(value)
+        super(InteractionField, self)._validate(value)
+
 class ResponsesSchema(BaseSchema):
-    Active = fields.List(fields.Str())
-    Deferred = fields.List(fields.Str())
-    Resumed = fields.List(fields.Str())
+    Active = fields.List(MessageField())
+    Deferred = fields.List(MessageField())
+    Resumed = fields.List(MessageField())
 
 class ResponsesField(fields.Field):
     def _validate(self, value):
@@ -384,18 +357,18 @@ class ResponsesField(fields.Field):
         super(ResponsesField, self)._validate(value)
 
 class SlotFollowUpSchema(BaseSchema):
-    prompts = fields.List(fields.Str(), required=True)
-    help = fields.List(fields.Str())
-    why = fields.List(fields.Str())
+    messages = fields.List(MessageField(), required=True)
+    help = fields.List(MessageField())
+    why = fields.List(MessageField())
     entity_actions = fields.Dict(keys=fields.Str(), values=ActionField())
     # TODO: validate it is a valid intent
     intent_actions = fields.Dict(keys=fields.Str(), values=ActionField())
     action = ActionField()
 
 class IntentSlotSchema(BaseSchema):
-    prompts = fields.List(fields.Str())
-    help = fields.List(fields.Str())
-    why = fields.List(fields.Str())
+    messages = fields.List(MessageField())
+    help = fields.List(MessageField())
+    why = fields.List(MessageField())
     follow_up = fields.Nested(SlotFollowUpSchema)
     entity_handler = fields.Str()
     autofill = fields.Boolean()
@@ -408,8 +381,8 @@ class IntentConfigSchema(BaseSchema):
     utterances = fields.List(fields.Str())
     slots = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentSlotSchema))
     fulfillment = fields.Nested(IntentFulfillmentSchema)
-    help = fields.List(fields.Str())
-    why = fields.List(fields.Str())
+    help = fields.List(MessageField())
+    why = fields.List(MessageField())
     is_repeatable = fields.Boolean()
     is_preemptive = fields.Boolean()
     is_answer = fields.Boolean()
@@ -421,12 +394,12 @@ class BotConfigFileSchema(BaseSchema):
     entity_filter_threshold = fields.Float(validate=is_zero_to_one)
     new_intent_limit = fields.Integer(validate=is_int_greater_or_equal_to_one)
     max_question_attempts = fields.Integer()
-    max_consecutive_message_attempts = fields.Integer()
+    max_consecutive_interaction_attempts = fields.Integer()
     max_consecutive_repeat_attempts = fields.Integer()
     smalltalk = fields.Boolean()
     nlu_class = fields.Str()
     nlu_config = fields.Dict(keys=fields.Str(), values=fields.Str())
-    common_messages = fields.Dict(keys=fields.Str(), values=MessageField(), required=True)
+    common_interactions = fields.Dict(keys=fields.Str(), values=InteractionField(), required=True)
     entity_handlers = fields.Dict(keys=fields.Str(), values=fields.Str())
     intent_configs = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentConfigSchema), required=True)
     # TODO: validate the list items
@@ -434,3 +407,6 @@ class BotConfigFileSchema(BaseSchema):
 
 class IntentConfigFileSchema(BaseSchema):
     intent_configs = fields.Dict(keys=fields.Str(), values=fields.Nested(IntentConfigSchema), required=True)
+
+class InteractionFileSchema(BaseSchema):
+    interactions = fields.Dict(keys=fields.Str(), values=InteractionField, required=True)

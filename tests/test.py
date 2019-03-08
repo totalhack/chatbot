@@ -15,6 +15,7 @@ TEST_BASE_URL = app.config.get('TEST_BASE_URL', 'http://127.0.0.1:9000')
 def make_request(bot, input_data, convo_id=None, intent_configs=None):
     data = {'debug': 1,
             'bot': bot,
+            'channel': 'text', # TODO: allow testing other channels
             'input': json.dumps(input_data)}
     if convo_id:
         data['conversation_id'] = convo_id
@@ -84,7 +85,7 @@ class TestChatBot(TestBase, metaclass=TestChatBotMeta):
                 top_intent = data['transaction']['intent_prediction']['top_intent_result']['name']
                 self.assertEqual(top_intent, expected_intent)
             if expected_message_name:
-                message_names = list(data['transaction']['response_messages'].keys())
+                message_names = list(data['transaction']['output'].keys())
                 self.assertIn(expected_message_name, message_names)
 
             if data['completed_intent_name']:

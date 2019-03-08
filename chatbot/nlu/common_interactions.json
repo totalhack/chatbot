@@ -1,0 +1,64 @@
+{
+    "interactions": {
+        "fallback": [
+            "Sorry, I didn't get that"
+        ],
+        
+        "goodbye": [
+            "Thanks. Have a nice day!"
+        ],
+        
+        "greeting": [
+            "Hi",
+            "Hello, and welcome to A B C"
+        ],
+        
+        "help": [
+            "This is the global help message"
+        ],
+        
+        "initial_prompt": [
+            "How can I help you today?"
+        ],
+        
+        "intents_complete": {
+            "messages": [
+                "Is there anything else I can help you with today?"
+            ],
+            "intent_actions": {"Yes": "NoAction",
+                               "No": "EndConversation"}
+        },
+        
+        "intent_aborted": {
+            "messages": ["I'm sorry, I'm unable to help you at this time"],
+            "action": "EndConversation"
+        },
+        
+        "cancel_intent?": {
+            "messages": [
+                "Are you sure you want to cancel the current intent?"
+            ],
+            "intent_actions": {"Yes": "CancelIntent",
+                               "No": "NoAction"}
+        },
+        
+        "interaction_exhausted": {
+            "messages": ["I'm sorry, I'm unable to help you at this time"],
+            "action": "EndConversation"
+        },
+        
+        "repeat_exhausted": {
+            "messages": ["I'm sorry, I'm unable to help you right now"],
+            "action": "EndConversation"
+        },
+        
+        "unanswered": [
+            "Sorry, I didn't get that",
+            "Sorry, I couldn't understand your answer"
+        ],
+        
+        "why": [
+            "This is the global why message"
+        ]
+    }
+}

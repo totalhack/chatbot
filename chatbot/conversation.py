@@ -12,17 +12,105 @@ from chatbot.core import (Question,
                           CommonIntents,
                           ResponseTypes,
                           TriggeredIntentPrediction,
+                          TextMessage,
+                          ButtonMessage,
                           get_nlu)
 from chatbot.model import db, Transactions, Conversations, SaveMixin
 from chatbot.utils import (PrintMixin,
                            JSONMixin,
+                           MappingMixin,
                            OrderedDictPlus,
-                           get_string_format_args,
+                           initializer,
                            json,
                            dbg,
                            warn,
                            error,
                            st)
+
+class UnsupportedMessageException(Exception):
+    pass
+
+class InvalidMessageContextException(Exception):
+    pass
+
+class Channel(PrintMixin, JSONMixin):
+    def __init__(self):
+        self.name = self.__class__.__name__
+
+    @classmethod
+    def message_supported(cls, message):
+        raise NotImplementedError
+
+    @classmethod
+    def format_message(cls, message, context=None):
+        raise NotImplementedError
+
+    @classmethod
+    def format_output(cls, output, context=None):
+        raise NotImplementedError
+
+    @classmethod
+    def create(cls, name):
+        name = name.lower()
+        if name == 'text':
+            return TextChannel()
+        elif name == 'slack':
+            return SlackChannel()
+        assert False, 'Unsupported channel name: %s' % name
+
+class TextChannel(Channel):
+    @classmethod
+    def message_supported(cls, message):
+        if isinstance(message, TextMessage):
+            return True
+        return False
+
+    @classmethod
+    def format_message(cls, message, context=None):
+        if not cls.message_supported(message):
+            raise UnsupportedMessageException(message)
+
+        value = message.value.strip()
+
+        if message.requires_context():
+            if not context:
+                raise InvalidMessageContextException('No context available for message with format args: %s' % value)
+            try:
+                value = value.format(**context)
+            except KeyError as e:
+                raise InvalidMessageContextException('Invalid message template or context, '
+                                                     'could not find %s in context' % str(e))
+
+        return value
+
+    @classmethod
+    def format_output(cls, output, context=None):
+        formatted_msgs = []
+        if not context:
+            context = {}
+        for msg in output.values():
+            formatted = cls.format_message(msg, context=context)
+            if not (formatted.endswith('.') or formatted.endswith('?') or formatted.endswith('!')):
+                formatted = formatted + '.'
+            formatted_msgs.append(formatted)
+        return ' '.join(formatted_msgs)
+
+class SlackChannel(Channel):
+    @classmethod
+    def message_supported(cls, message):
+        if isinstance(message, (TextMessage, ButtonMessage)):
+            return True
+        return False
+
+    @classmethod
+    def format_message(cls, message, context=None):
+        if not cls.message_supported(message):
+            raise UnsupportedMessageException(message)
+        assert False
+
+    @classmethod
+    def format_output(cls, output, context=None):
+        raise NotImplementedError
 
 class Input(PrintMixin, JSONMixin):
     repr_attrs = ['type', 'value']
@@ -50,11 +138,29 @@ class Input(PrintMixin, JSONMixin):
 
         assert self.type in self.types, 'Invalid input type: %s' % self.type
 
+class Output(PrintMixin, JSONMixin, MappingMixin):
+    repr_attrs = ['status', 'response']
+
+    @initializer
+    def __init__(self, status, response):
+        pass
+
+class ErrorOutput(Output):
+    @initializer
+    def __init__(self, response, **kwargs):
+        self.status = 'error'
+
+class SuccessOutput(Output):
+    @initializer
+    def __init__(self, response, **kwargs):
+        self.status = 'success'
+
 class Transaction(JSONMixin, SaveMixin):
     save_attrs = ['id',
                   'conversation_id',
+                  'channel',
                   'input',
-                  'response_message_text',
+                  'output',
                   'slots_filled',
                   'question',
                   'new_intents',
@@ -71,18 +177,20 @@ class Transaction(JSONMixin, SaveMixin):
     dont_copy_attrs = [
         'id',
         'conversation_id',
+        'channel',
         'input',
+        'output',
         'intent_prediction',
         'new_intents',
     ]
 
-    def __init__(self, conversation_id):
+    def __init__(self, conversation_id, channel, input=None):
         self.conversation_id = conversation_id
         self.id = str(uuid.uuid4())
-        self.input = None
+        self.channel = channel
+        self.input = input
+        self.output = OrderedDictPlus()
         self.intent_prediction = None
-        self.response_messages = OrderedDictPlus()
-        self.response_message_text = None
         self.slots_filled = MessageGroup()
         self.question = None
         self.new_intents = []
@@ -101,6 +209,9 @@ class Transaction(JSONMixin, SaveMixin):
         db.session.merge(tx)
         db.session.commit()
 
+    def format_output(self, context=None):
+        return self.channel.format_output(self.output, context=context)
+
     def add_filled_slot(self, intent, slot_result):
         self.slots_filled[intent.name] = slot_result
 
@@ -118,26 +229,14 @@ class Transaction(JSONMixin, SaveMixin):
         dbg('Canceling intent: %s' % intent_name)
         self.canceled_intents.append(intent_name)
 
-    def add_response_message(self, message_name, message, context=None, expected_entities=None, expected_intents=None,
-                             expected_text=None, prepend=False):
-        if message:
-            message = message.strip()
-            if not (message.endswith('.') or message.endswith('?')):
-                message = message + '.'
-
-            format_args = get_string_format_args(message)
-            if format_args:
-                assert context, 'Message has format args but no context: %s' % message
-                for format_arg in format_args:
-                    assert format_arg in context,\
-                        'Message arg "%s" can not be satisifed by context: %s' % (format_arg, context)
-
+    def add_output(self, interaction_name, message, context=None, expected_entities=None, expected_intents=None,
+                   expected_text=None, prepend=False):
         if prepend:
-            self.response_messages.prepend(message_name, message)
-            dbg('Prepending response message: %s: %s' % (message_name, message))
+            self.output.prepend(interaction_name, message)
+            dbg('Prepending response interaction: %s: %s' % (interaction_name, message))
         else:
-            self.response_messages[message_name] = message
-            dbg('Adding response message: %s: %s' % (message_name, message))
+            self.output[interaction_name] = message
+            dbg('Adding response interaction: %s: %s' % (interaction_name, message))
 
         if expected_entities or expected_intents or expected_text:
             assert not self.requires_answer(), 'A transaction can only require a single answer'
@@ -152,31 +251,15 @@ class Transaction(JSONMixin, SaveMixin):
             assert isinstance(expected_text, ActionMap)
             self.expected_text = expected_text
 
-    def add_response_message_object(self, msg, context=None, prepend=False):
-        self.add_response_message(msg.name, msg.get_prompt(),
-                                  context=context,
-                                  prepend=prepend,
-                                  expected_entities=getattr(msg, 'entity_actions', None),
-                                  expected_intents=getattr(msg, 'intent_actions', None))
+    def add_output_interaction(self, interaction, context=None, prepend=False):
+        self.add_output(interaction.name, interaction.get_message(),
+                        context=context,
+                        prepend=prepend,
+                        expected_entities=getattr(interaction, 'entity_actions', None),
+                        expected_intents=getattr(interaction, 'intent_actions', None))
 
-    def format_response_message(self, context=None):
-        if not context:
-            context = {}
-        response_message = ' '.join([x for x in self.response_messages.values() if x])
-        if '{' in response_message or '}' in response_message:
-            assert ('{' in response_message) and ('}' in response_message),\
-                'Invalid message template, open or close braces missing: "%s"' % response_message
-            # TODO: we shouldnt allow prompts that require context values that
-            # are not filled if there are other options
-            try:
-                response_message = response_message.format(**context)
-            except KeyError as e:
-                raise KeyError('Invalid message template, could not find "%s" in context' % str(e))
-            self.response_message_text = response_message
-        return response_message
-
-    def clear_response_messages(self):
-        self.response_messages = OrderedDictPlus()
+    def clear_output(self):
+        self.output = OrderedDictPlus()
         self.expected_entities = None
         self.expected_intents = None
         self.expected_text = None
@@ -249,7 +332,7 @@ class Conversation(JSONMixin, SaveMixin):
         self.question_attempts = OrderedDictPlus()
         self.active_intent_name = None
         self.completed = False
-        self.consecutive_message_count = defaultdict(int)
+        self.consecutive_interaction_count = defaultdict(int)
         self.consecutive_repeat_count = 0
 
     def save(self):
@@ -280,12 +363,12 @@ class Conversation(JSONMixin, SaveMixin):
         self.cancel_intent(tx)
 
     def _action_ConfirmCancelIntent(self, tx, params=None, **kwargs):
-        self.add_common_response_message(tx, self.bot_config, 'cancel_intent?')
+        self.add_common_interaction(tx, self.bot_config, 'cancel_intent?')
 
     def _action_ConfirmSwitchIntent(self, tx, params=None, **kwargs):
-        msg_name = 'intent_switch:%s' % params['intent_name']
+        interaction_name = 'intent_switch:%s' % params['intent_name']
         # TODO: better message, ability to override format
-        msg = 'Are you sure you want to switch intents?'
+        msg = TextMessage('Are you sure you want to switch intents?')
 
         # If Yes, cancel the active intent and move on to the new one
         # If No, remove the suggested intent and continue with any active intents
@@ -298,15 +381,15 @@ class Conversation(JSONMixin, SaveMixin):
             expected_intents = ActionMap({CommonIntents.Yes: Actions.CancelIntent,
                                           CommonIntents.No: {'name': Actions.RemoveIntent,
                                                              'params': params}})
-        self.add_response_message(tx, msg_name, msg, expected_intents=expected_intents)
+        self.add_output(tx, interaction_name, msg, expected_intents=expected_intents)
 
-    def _action_EndConversation(self, tx, skip_common_messages=False, **kwargs):
+    def _action_EndConversation(self, tx, skip_common_interactions=False, **kwargs):
         self.completed = True
-        if not skip_common_messages:
-            self.add_common_response_message(tx, self.bot_config, 'goodbye')
+        if not skip_common_interactions:
+            self.add_common_interaction(tx, self.bot_config, 'goodbye')
 
     def _action_Help(self, tx, **kwargs):
-        self.add_help_or_why_message(tx, 'help')
+        self.add_help_or_why(tx, 'help')
 
     def _action_NoAction(self, *args, **kwargs):
         pass
@@ -321,17 +404,17 @@ class Conversation(JSONMixin, SaveMixin):
 
         if last_tx:
             if self.consecutive_repeat_count >= self.bot_config.max_consecutive_repeat_attempts:
-                self.add_common_response_message(tx, self.bot_config, 'repeat_exhausted')
+                self.add_common_interaction(tx, self.bot_config, 'repeat_exhausted')
             else:
                 if self.transaction_repeatable(last_tx):
                     self.repeat_transaction(tx, last_tx, reason=reason, question_only=question_only)
                 else:
                     self.abort_intent(tx)
         else:
-            if self.consecutive_message_count['fallback'] >= self.bot_config.max_consecutive_message_attempts:
-                self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
+            if self.consecutive_interaction_count['fallback'] >= self.bot_config.max_consecutive_interaction_attempts:
+                self.add_common_interaction(tx, self.bot_config, 'interaction_exhausted')
             else:
-                self.add_common_response_message(tx, self.bot_config, 'fallback')
+                self.add_common_interaction(tx, self.bot_config, 'fallback')
 
     def _action_RepeatSlot(self, *args, **kwargs):
         self.repeat_slot()
@@ -354,22 +437,22 @@ class Conversation(JSONMixin, SaveMixin):
                 if filled_slot.follow_up:
                     follow_up = filled_slot.follow_up
                     dbg('Adding follow-up %s during REPLACE_SLOT' % follow_up.name)
-                    question, prompt = self.get_question_and_prompt(tx, follow_up)
+                    question = self.get_question(tx, follow_up)
                     if not question:
                         # Can happen if we've exhausted the question/slot and the intent is aborted
                         return
-                    self.add_response_message(tx, '%s:%s' % (self.active_intent.name, question.name), prompt,
-                                              expected_entities=question.entity_actions,
-                                              expected_intents=question.intent_actions)
+                    self.add_output(tx, '%s:%s' % (self.active_intent.name, question.name), question.get_message(),
+                                    expected_entities=question.entity_actions,
+                                    expected_intents=question.intent_actions)
 
     def _action_TriggerIntent(self, tx, params=None, **kwargs):
         intent_name = params['intent_name']
         self.prepend_pending_intent(intent_name)
 
     def _action_Why(self, tx, **kwargs):
-        self.add_help_or_why_message(tx, 'why')
+        self.add_help_or_why(tx, 'why')
 
-    def do_action(self, tx, action, entity_results=None, intent_results=None, skip_common_messages=False):
+    def do_action(self, tx, action, entity_results=None, intent_results=None, skip_common_interactions=False):
         dbg('Do action %s' % action)
         func_name = '_action_' + action.name
         func = getattr(self, func_name, None)
@@ -377,22 +460,22 @@ class Conversation(JSONMixin, SaveMixin):
         func(tx, params=action.params,
              entity_results=entity_results,
              intent_results=intent_results,
-             skip_common_messages=skip_common_messages)
+             skip_common_interactions=skip_common_interactions)
 
-    def understand(self, tx, input):
+    def understand(self, tx):
         last_tx = self.get_last_transaction()
 
-        if input.type == 'intent':
-            intent_prediction = TriggeredIntentPrediction(self.bot_config, input.value)
-        elif input.type == 'text':
-            intent_prediction = self.nlu.process_query(input.value, last_tx=last_tx)
+        if tx.input.type == 'intent':
+            intent_prediction = TriggeredIntentPrediction(self.bot_config, tx.input.value)
+        elif tx.input.type == 'text':
+            intent_prediction = self.nlu.process_query(tx.input.value, last_tx=last_tx)
         else:
-            assert False, 'Invalid input: %s' % input
+            assert False, 'Invalid input: %s' % tx.input
 
-        if input.context:
-            dbg('Adding context to intent_prediction: %s' % input.context)
-            intent_prediction.add_entity_results_from_context(input.context)
-            self.context.update(input.context)
+        if tx.input.context:
+            dbg('Adding context to intent_prediction: %s' % tx.input.context)
+            intent_prediction.add_entity_results_from_context(tx.input.context)
+            self.context.update(tx.input.context)
 
         dbg(vars(intent_prediction))
         tx.intent_prediction = intent_prediction
@@ -442,11 +525,11 @@ class Conversation(JSONMixin, SaveMixin):
         tx.copy_data_for_repeat_transaction(repeat_tx, reason=reason)
         if question_only:
             assert tx.question, 'Last TX does not have a question to repeat'
-            tx.clear_response_messages()
-            prompt = tx.question.get_prompt()
-            self.add_response_message(tx, '%s:%s' % (self.active_intent.name, tx.question.name), prompt,
-                                      expected_entities=tx.question.entity_actions,
-                                      expected_intents=tx.question.intent_actions)
+            tx.clear_output()
+            message = tx.question.get_message()
+            self.add_output(tx, '%s:%s' % (self.active_intent.name, tx.question.name), message,
+                            expected_entities=tx.question.entity_actions,
+                            expected_intents=tx.question.intent_actions)
 
     def get_intent_slot_results(self, intent_name):
         return self.intent_slot_results[intent_name]
@@ -497,27 +580,26 @@ class Conversation(JSONMixin, SaveMixin):
         for slot_result in last_tx.slots_filled.values():
             self.clear_filled_slot_result(self.active_intent, slot_result)
 
-    def get_next_question_and_prompt(self, tx, remaining_questions):
+    def get_next_question(self, tx, remaining_questions):
         question = remaining_questions.get_next()
 
         if not self.add_question_attempt(self.active_intent, question):
             # We've asked this question the max number of times already
             self.abort_intent(tx)
-            return None, None
+            return None
 
         tx.question = question
-        prompt = question.get_prompt()
-        return question, prompt
+        return question
 
-    def get_question_and_prompt(self, tx, question):
-        return self.get_next_question_and_prompt(tx, MessageGroup([(question.name, question)]))
+    def get_question(self, tx, question):
+        return self.get_next_question(tx, MessageGroup([(question.name, question)]))
 
     def abort_intent(self, tx):
         if not self.active_intent:
             error('Trying to abort intent but no intent is active on conversation')
             return
         tx.abort_intent(self.active_intent.name)
-        self.add_common_response_message(tx, self.bot_config, 'intent_aborted')
+        self.add_common_interaction(tx, self.bot_config, 'intent_aborted')
         self.clear_question_attempts(self.active_intent)
         self.remove_active_intent()
 
@@ -683,11 +765,11 @@ class Conversation(JSONMixin, SaveMixin):
             if response:
                 if not response.success():
                     warn('Fulfillment did not succeed! Reason: %s' % response.status_reason)
-                if response.message:
+                if response.interaction:
                     dbg('Adding fulfillment response %s' % response)
-                    self.add_response_message_object(tx, response.message)
+                    self.add_output_interaction(tx, response.interaction)
                 if response.action:
-                    self.do_action(tx, response.action, skip_common_messages=bool(response.message))
+                    self.do_action(tx, response.action, skip_common_interactions=bool(response.interaction))
         finally:
             self.completed_intents[intent.name] = True
             self.remove_intent(intent.name)
@@ -710,15 +792,15 @@ class Conversation(JSONMixin, SaveMixin):
             context = {x.name:x.value for x in slot_results.values()}
         return context
 
-    def add_new_intent_message(self, tx, intent, response_type=None, entity_results=None):
-        '''Gets the message(s) at the start of a new intent'''
+    def add_new_intent_output(self, tx, intent, response_type=None, entity_results=None):
+        '''Gets the output at the start of a new intent'''
         if not response_type:
             response_type = ResponseTypes.Active
         response = intent.responses.get_response(response_type)
         if not response:
             warn('No response for intent %s' % intent)
 
-        prompt = ''
+        message = None
         if response_type in [ResponseTypes.Active, ResponseTypes.Resumed] and self.get_intent_slot_results(intent.name):
             remaining_questions = self.fill_intent_slot_results_with_entity_results(tx, intent, entity_results)
             if not remaining_questions:
@@ -733,74 +815,74 @@ class Conversation(JSONMixin, SaveMixin):
                 'FollowUp found while adding message for new intent: %s' % remaining_questions
 
             # There are slots to prompt for this intent still
-            question, prompt = self.get_next_question_and_prompt(tx, remaining_questions)
+            question = self.get_next_question(tx, remaining_questions)
             if not question:
                 return
+            message = question.get_message()
 
         if response:
-            self.add_response_message(tx, '%s:%s' % (intent.name, response_type), response)
-        if prompt:
-            self.add_response_message(tx, '%s:%s' % (intent.name, question.name), prompt,
-                                      expected_entities=question.entity_actions,
-                                      expected_intents=question.intent_actions)
+            self.add_output(tx, '%s:%s' % (intent.name, response_type), response)
+        if message:
+            self.add_output(tx, '%s:%s' % (intent.name, question.name), message,
+                            expected_entities=question.entity_actions,
+                            expected_intents=question.intent_actions)
 
-    def add_response_message(self, tx, *args, **kwargs):
+    def add_output(self, tx, *args, **kwargs):
         kwargs['context'] = kwargs.get('context', self.get_message_context())
-        tx.add_response_message(*args, **kwargs)
+        tx.add_output(*args, **kwargs)
 
-    def add_response_message_object(self, tx, msg, **kwargs):
+    def add_output_interaction(self, tx, interaction, **kwargs):
         kwargs['context'] = kwargs.get('context', self.get_message_context())
-        tx.add_response_message(msg.name, msg.get_prompt(),
-                                expected_entities=getattr(msg, 'entity_actions', None),
-                                expected_intents=getattr(msg, 'intent_actions', None),
-                                **kwargs)
+        tx.add_output(interaction.name, interaction.get_message(),
+                      expected_entities=getattr(interaction, 'entity_actions', None),
+                      expected_intents=getattr(interaction, 'intent_actions', None),
+                      **kwargs)
 
-    def get_common_message(self, bot_config, message_name):
-        return bot_config.common_messages[message_name]
+    def get_common_interaction(self, bot_config, interaction_name):
+        return bot_config.common_interactions[interaction_name]
 
-    def add_common_response_message(self, tx, bot_config, message_name, prepend=False):
-        message = self.get_common_message(bot_config, message_name)
-        message_text = None
+    def add_common_interaction(self, tx, bot_config, interaction_name, prepend=False):
+        interaction = self.get_common_interaction(bot_config, interaction_name)
+        message = None
         expected_entities = None
         expected_intents = None
 
-        if not message:
+        if not interaction:
             pass
         else:
-            message_text = message.get_prompt()
-            if isinstance(message, Question):
-                expected_entities = message.entity_actions
-                expected_intents = message.intent_actions
-            if message.action:
-                self.do_action(tx, message.action, skip_common_messages=bool(message_text))
+            message = interaction.get_message()
+            if isinstance(interaction, Question):
+                expected_entities = interaction.entity_actions
+                expected_intents = interaction.intent_actions
+            if interaction.action:
+                self.do_action(tx, interaction.action, skip_common_interactions=bool(message))
 
-        self.add_response_message(tx, message_name, message_text, expected_entities=expected_entities,
-                                  expected_intents=expected_intents, prepend=prepend)
+        self.add_output(tx, interaction_name, message, expected_entities=expected_entities,
+                        expected_intents=expected_intents, prepend=prepend)
 
-    # Yea, I don't know what else to call this right now.
-    def add_help_or_why_message(self, tx, message_type):
+    def add_help_or_why(self, tx, message_type):
+        msg = None
         last_tx = self.get_last_transaction()
+
         if last_tx and last_tx.question and getattr(last_tx.question, message_type):
             msg = getattr(last_tx.question, 'get_%s' % message_type)()
-            msg_name = '%s:%s' % (last_tx.question.name, message_type)
-            if self.consecutive_message_count[msg_name] >= self.bot_config.max_consecutive_message_attempts:
-                self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                return
-            self.add_response_message(tx, msg_name, msg)
+            interaction_name = '%s:%s' % (last_tx.question.name, message_type)
         elif self.active_intent and getattr(self.active_intent, message_type):
             msg = getattr(self.active_intent, 'get_%s' % message_type)()
-            msg_name = '%s:%s' % (self.active_intent.name, message_type)
-            if self.consecutive_message_count[msg_name] >= self.bot_config.max_consecutive_message_attempts:
-                self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                return
-            self.add_response_message(tx, msg_name, msg)
+            interaction_name = '%s:%s' % (self.active_intent.name, message_type)
         else:
-            if self.consecutive_message_count[message_type] >= self.bot_config.max_consecutive_message_attempts:
-                self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
-                return
-            self.add_common_response_message(tx, self.bot_config, message_type)
+            interaction_name = message_type
 
-    def create_response_message(self, tx, intent_results, entity_results):
+        if self.consecutive_interaction_count[interaction_name] >= self.bot_config.max_consecutive_interaction_attempts:
+            self.add_common_interaction(tx, self.bot_config, 'interaction_exhausted')
+            return
+
+        if msg:
+            self.add_output(tx, interaction_name, msg)
+        else:
+            self.add_common_interaction(tx, self.bot_config, message_type)
+
+    def create_output(self, tx, intent_results, entity_results):
         last_tx = self.get_last_transaction()
         greeted = False
         common_intent_handled = False
@@ -849,13 +931,13 @@ class Conversation(JSONMixin, SaveMixin):
                 if intent.name == CommonIntents.Help:
                     dbg('Help Intent')
                     self.do_action(tx, Action('Help'))
-                    if 'message_exhaused' in tx.response_messages:
+                    if 'interaction_exhaused' in tx.output:
                         return
 
                 if intent.name == CommonIntents.Why:
                     dbg('Why Intent')
                     self.do_action(tx, Action('Why'))
-                    if 'message_exhaused' in tx.response_messages:
+                    if 'interaction_exhaused' in tx.output:
                         return
 
                 if intent.is_smalltalk:
@@ -868,8 +950,8 @@ class Conversation(JSONMixin, SaveMixin):
                         warn('smalltalk disabled, skipping intent: %s' % intent.name)
                         continue
 
-                    self.add_new_intent_message(tx, intent, response_type=ResponseTypes.Active,
-                                                entity_results=entity_results)
+                    self.add_new_intent_output(tx, intent, response_type=ResponseTypes.Active,
+                                               entity_results=entity_results)
 
             else:
                 if intent.is_greeting:
@@ -879,10 +961,10 @@ class Conversation(JSONMixin, SaveMixin):
 
         if (not greeted) and (not last_tx):
             dbg('Adding greeting on first transaction')
-            self.add_common_response_message(tx, self.bot_config, 'greeting', prepend=True)
+            self.add_common_interaction(tx, self.bot_config, 'greeting', prepend=True)
             if not intent_results:
                 # It's the first message and we didn't recognize the intent of the user
-                self.add_common_response_message(tx, self.bot_config, 'initial_prompt')
+                self.add_common_interaction(tx, self.bot_config, 'initial_prompt')
                 return
 
         # Handle questions that require answers
@@ -890,25 +972,25 @@ class Conversation(JSONMixin, SaveMixin):
             is_answered, action = self.is_answered(last_tx, entity_results, intent_results, tx.input)
             if is_answered:
                 self.do_action(tx, action, entity_results=entity_results, intent_results=intent_results)
-                if self.completed or tx.response_messages:
+                if self.completed or tx.output:
                     return
             else:
                 if self.transaction_repeatable(last_tx):
                     # repeat_transaction will overwrite messages, so copy these first
-                    tx_messages = copy.deepcopy(tx.response_messages)
+                    tx_output = copy.deepcopy(tx.output)
                     tx_requires_answer = tx.requires_answer()
                     self.repeat_transaction(tx, last_tx, reason='last transaction not answered', question_only=True)
-                    if tx_messages:
+                    if tx_output:
                         # Messages were already added to this tx by some previously processed intent.
                         # The assertion below ensures that we arent asking two questions at once. That's
                         # not allowed, but we probably need a better way to handle this situation since this
                         # may be an easy trap for the bot designer to fall into.
                         assert not tx_requires_answer,\
                             'A question was asked while another unanswered question is in progress'
-                        for msg_name, msg in reversed(list(tx_messages.items())):
-                            self.add_response_message(tx, msg_name, msg, prepend=True)
+                        for interaction_name, msg in reversed(list(tx_output.items())):
+                            self.add_output(tx, interaction_name, msg, prepend=True)
                     else:
-                        self.add_common_response_message(tx, self.bot_config, 'unanswered', prepend=True)
+                        self.add_common_interaction(tx, self.bot_config, 'unanswered', prepend=True)
                 else:
                     self.abort_intent(tx)
                 return
@@ -931,14 +1013,14 @@ class Conversation(JSONMixin, SaveMixin):
             remaining_questions = self.fill_intent_slot_results_with_entity_results(tx, self.active_intent,
                                                                                     entity_results)
             if remaining_questions:
-                question, prompt = self.get_next_question_and_prompt(tx, remaining_questions)
+                question = self.get_next_question(tx, remaining_questions)
                 if not question:
                     # Can happen if we've exhausted the question/slot and the intent is aborted
                     return
 
-                self.add_response_message(tx, '%s:%s' % (self.active_intent.name, question.name), prompt,
-                                          expected_entities=question.entity_actions,
-                                          expected_intents=question.intent_actions)
+                self.add_output(tx, '%s:%s' % (self.active_intent.name, question.name), question.get_message(),
+                                expected_entities=question.entity_actions,
+                                expected_intents=question.intent_actions)
                 return
 
             self.active_intent_completed(tx)
@@ -946,7 +1028,6 @@ class Conversation(JSONMixin, SaveMixin):
         # We've handled any one-off or active intents, move on to other pending intents
         for i, intent_name in enumerate(self.pending_intents.keys()):
             intent = self.get_intent(intent_name)
-            message = None
             if i == 0:
                 self.active_intent = intent
                 tx.active_intent_name = intent.name
@@ -959,16 +1040,17 @@ class Conversation(JSONMixin, SaveMixin):
                 response_type = ResponseTypes.Deferred
 
             dbg('Handling %s intent: %s' % (response_type, intent.name))
-            self.add_new_intent_message(tx, intent, response_type=response_type, entity_results=entity_results)
+            self.add_new_intent_output(tx, intent, response_type=response_type, entity_results=entity_results)
 
-        if not tx.response_messages:
+        if not tx.output:
             if tx.completed_intent_name or (self.completed_intents and not self.pending_intents):
-                self.add_common_response_message(tx, self.bot_config, 'intents_complete')
+                self.add_common_interaction(tx, self.bot_config, 'intents_complete')
             else:
-                if self.consecutive_message_count['fallback'] >= self.bot_config.max_consecutive_message_attempts:
-                    self.add_common_response_message(tx, self.bot_config, 'message_exhausted')
+                if (self.consecutive_interaction_count['fallback'] >=
+                    self.bot_config.max_consecutive_interaction_attempts):
+                    self.add_common_interaction(tx, self.bot_config, 'interaction_exhausted')
                 else:
-                    self.add_common_response_message(tx, self.bot_config, 'fallback')
+                    self.add_common_interaction(tx, self.bot_config, 'fallback')
 
     def process_intent_prediction(self, tx, intent_prediction):
         intent_results, entity_results = intent_prediction.get_valid(
@@ -980,27 +1062,26 @@ class Conversation(JSONMixin, SaveMixin):
         if self.bot_config.new_intent_limit:
             dbg('Limiting processing to top %s intent(s)' % self.bot_config.new_intent_limit)
             intent_results = intent_results[:self.bot_config.new_intent_limit]
-        self.create_response_message(tx, intent_results, entity_results)
+        self.create_output(tx, intent_results, entity_results)
 
-    def create_transaction(self):
-        tx = Transaction(self.id)
+    def create_transaction(self, channel, input=None):
+        tx = Transaction(self.id, channel, input=input)
         self.transactions[tx.id] = tx
         return tx
 
-    def reply(self, tx, input):
-        input = Input(input)
-        tx.input = input
+    def reply(self, tx):
+        assert isinstance(tx, Transaction), 'Invalid transaction object: %s' % tx
 
-        if input.type == 'action':
-            self.do_action(tx, Action(input.value))
+        if tx.input.type == 'action':
+            self.do_action(tx, Action(tx.input.value))
         else:
-            intent_prediction = self.understand(tx, input)
+            intent_prediction = self.understand(tx)
             self.process_intent_prediction(tx, intent_prediction)
 
-        response_message = None
-        if tx.response_messages:
+        output = None
+        if tx.output:
             context = self.get_message_context()
-            response_message = tx.format_response_message(context=context)
+            output = tx.format_output(context=context)
 
         if tx.repeat_id:
             self.consecutive_repeat_count += 1
@@ -1008,11 +1089,11 @@ class Conversation(JSONMixin, SaveMixin):
         else:
             self.consecutive_repeat_count = 0
 
-        for key in tx.response_messages:
-            self.consecutive_message_count[key] += 1
-            dbg('Consecutive %s messages: %s' % (key, self.consecutive_message_count[key]))
-        for key in self.consecutive_message_count:
-            if key not in tx.response_messages:
-                self.consecutive_message_count[key] = 0
+        for key in tx.output:
+            self.consecutive_interaction_count[key] += 1
+            dbg('Consecutive %s interactions: %s' % (key, self.consecutive_interaction_count[key]))
+        for key in self.consecutive_interaction_count:
+            if key not in tx.output:
+                self.consecutive_interaction_count[key] = 0
 
-        return response_message
+        return output

@@ -14,6 +14,8 @@ from chatbot.utils import (dbg,
                            st,
                            json,
                            get_class_vars,
+                           string_has_format_args,
+                           get_string_format_args,
                            import_object,
                            OrderedDictPlus,
                            PrintMixin,
@@ -112,74 +114,99 @@ class ActionMap(JSONMixin, MappingMixin):
         self.__dict__[key] = value
 
 class Message(PrintMixin, JSONMixin, MappingMixin):
-    repr_attrs = ['name']
+    repr_attrs = ['value']
 
     @initializer
-    def __init__(self, name, prompts=None, action=None):
-        if self.prompts:
-            assert all([isinstance(x, str) for x in prompts]), 'Message prompts must all be strings: %s' % prompts
-        if action and not isinstance(action, Action):
-            self.action = Action(action)
+    def __init__(self, value=None):
+        self.validate(value)
 
-    def get_prompt(self):
-        if not self.prompts:
-            return ''
-        prompt = random.choice(self.prompts)
-        return prompt
+    def get_message(self):
+        return self
 
-    @classmethod
-    def infer_type_from_dict(cls, message):
-        assert isinstance(message, dict), 'Invalid message type: %s' % message
-        # TODO: is there a better way to do this? We can tell its a question because
-        # its expecting an answer, but we can't tell if its a Slot or Question
-        if 'intent_actions' in message or 'entity_actions' in message:
-            return 'question'
-        return 'message'
+    def requires_context(self):
+        raise NotImplementedError
+
+    def satisfied_by_context(self, context):
+        raise NotImplementedError
+
+    def validate(self):
+        raise NotImplementedError
 
     @classmethod
-    def from_dict(cls, message_dict):
-        message_type = message_dict['type'].lower()
-        if message_type == 'message':
-            return Message(message_dict['name'],
-                           message_dict['prompts'],
-                           action=message_dict.get('action', None))
-        if message_type == 'question':
-            return Question(message_dict['name'],
-                            message_dict['prompts'],
-                            intent_actions=ActionMap(message_dict.get('intent_actions', {})),
-                            entity_actions=ActionMap(message_dict.get('entity_actions', {})),
-                            help=message_dict.get('help', None),
-                            why=message_dict.get('why', None))
-        if message_type == 'slot':
-            return Slot(message_dict['name'],
-                        message_dict['prompts'],
-                        entity_handler_name=message_dict.get('entity_handler_name', None),
-                        follow_up=message_dict.get('follow_up', None),
-                        help=message_dict.get('help', None),
-                        why=message_dict.get('why', None))
-        assert False, 'Invalid message type: %s' % message_type
-
-    @classmethod
-    def create(cls, name, message):
+    def create(cls, message):
         if isinstance(message, Message):
             return message
         if isinstance(message, str):
-            return Message(name, [message])
-        if isinstance(message, list):
-            return Message(name, message)
+            return TextMessage(message)
         if isinstance(message, dict):
-            message['type'] = message.get('type', cls.infer_type_from_dict(message))
-            message['name'] = message.get('name', name)
-            message['prompts'] = message.get('prompts', None)
-            return cls.from_dict(message)
+            message_type = message['type'].lower()
+            if message_type == 'text':
+                return TextMessage(message['text'])
+            if message_type == 'button':
+                return ButtonMessage(message)
+            assert False, 'Invalid message_type: %s' % message_type
         assert False, 'Invalid message type: %s' % message
 
+class TextMessage(Message):
+    def requires_context(self):
+        if string_has_format_args(self.value):
+            return True
+        return False
+
+    def satisfied_by_context(self, context):
+        format_args = get_string_format_args(self.value)
+        for format_arg in format_args:
+            if format_arg not in context:
+                return False
+        return True
+
+    def validate(self, value):
+        assert isinstance(value, str), 'TextMessage value must be str type'
+
+class ButtonMessage(Message):
+    def requires_context(self):
+        format_args = get_string_format_args(self.value['label'])
+        if format_args:
+            return True
+        return False
+
+    def satisfied_by_context(self, context):
+        format_args = get_string_format_args(self.value['label'])
+        for format_arg in format_args:
+            if format_arg not in context:
+                return False
+        return True
+
+    def validate(self, value):
+        assert isinstance(value, dict), 'ButtonMessage value must be dict type'
+        assert 'label' in value, 'ButtonMessage must have a label'
+
+class MessageOptions(PrintMixin, JSONMixin, MappingMixin):
+    repr_attrs = ['messages']
+
+    @initializer
+    def __init__(self, messages=None):
+        if messages:
+            assert all([isinstance(x, Message) for x in messages]), 'Must be message objects: %s' % messages
+
+    def get_message(self):
+        if not self.messages:
+            return None
+        message = random.choice(self.messages)
+        return message
+
+    @classmethod
+    def create(cls, messages):
+        messages = [Message.create(message) for message in messages] if messages else None
+        return cls(messages)
+
 class MessageGroup(OrderedDictPlus, JSONMixin):
+    """An ordered map of Messages or MessageOptions"""
     def get_next(self):
         return list(self.values())[0]
 
-    def get_next_prompt(self):
-        return self.get_next().get_prompt()
+    def get_next_message(self):
+        return self.get_next().get_message()
 
 class MessageMap(JSONMixin, MappingMixin):
     def __init__(self, *args, **kwargs):
@@ -187,35 +214,126 @@ class MessageMap(JSONMixin, MappingMixin):
 
     def __setitem__(self, key, value):
         if not isinstance(value, Message):
-            value = Message.create(key, value)
+            value = Message.create(value)
         self.__dict__[key] = value
 
-class ResponseMap(MessageMap):
+class MessageOptionsMap(JSONMixin, MappingMixin):
+    def __init__(self, *args, **kwargs):
+        self.update(dict(*args, **kwargs))
+
     def __setitem__(self, key, value):
-        assert key in (ResponseTypes.Active, ResponseTypes.Resumed, ResponseTypes.Deferred),\
-            'Invalid response type: %s' % key
+        if not isinstance(value, MessageOptions):
+            value = MessageOptions.create(value)
+        self.__dict__[key] = value
+
+class Interaction(PrintMixin, JSONMixin, MappingMixin):
+    @initializer
+    def __init__(self, name, messages=None, action=None):
+        if not isinstance(messages, MessageOptions):
+            self.messages = MessageOptions(messages)
+        if action and not isinstance(action, Action):
+            self.action = Action(action)
+
+    def get_message(self):
+        return self.messages.get_message()
+
+    @classmethod
+    def infer_type_from_dict(cls, interaction):
+        assert isinstance(interaction, dict), 'Invalid interaction type: %s' % interaction
+        # TODO: is there a better way to do this? We can tell its a question because
+        # its expecting an answer, but we can't tell if its a Slot or Question
+        if 'intent_actions' in interaction or 'entity_actions' in interaction:
+            return 'question'
+        return 'interaction'
+
+    @classmethod
+    def from_dict(cls, interaction_dict):
+        interaction_type = interaction_dict['type'].lower()
+        if interaction_type == 'interaction':
+            return Interaction(interaction_dict['name'],
+                               messages=MessageOptions.create(interaction_dict['messages']),
+                               action=interaction_dict.get('action', None))
+        if interaction_type == 'question':
+            return Question(interaction_dict['name'],
+                            MessageOptions.create(interaction_dict['messages']),
+                            intent_actions=ActionMap(interaction_dict.get('intent_actions', {})),
+                            entity_actions=ActionMap(interaction_dict.get('entity_actions', {})),
+                            help=interaction_dict.get('help', None),
+                            why=interaction_dict.get('why', None))
+        if interaction_type == 'slot':
+            return Slot(interaction_dict['name'],
+                        MessageOptions.create(interaction_dict['messages']),
+                        entity_handler_name=interaction_dict.get('entity_handler_name', None),
+                        follow_up=interaction_dict.get('follow_up', None),
+                        help=interaction_dict.get('help', None),
+                        why=interaction_dict.get('why', None))
+        assert False, 'Invalid interaction type: %s' % interaction_type
+
+    @classmethod
+    def create(cls, name, interaction):
+        if isinstance(interaction, Interaction):
+            return interaction
+        if isinstance(interaction, str):
+            return Interaction(name, messages=MessageOptions.create([interaction]))
+        if isinstance(interaction, list):
+            return Interaction(name, messages=MessageOptions.create(interaction))
+        if isinstance(interaction, dict):
+            interaction['type'] = interaction.get('type', cls.infer_type_from_dict(interaction))
+            interaction['name'] = interaction.get('name', name)
+            interaction['messages'] = interaction.get('messages', None)
+            return cls.from_dict(interaction)
+        assert False, 'Invalid interaction type: %s' % interaction
+
+class InteractionMap(JSONMixin, MappingMixin):
+    def __init__(self, *args, **kwargs):
+        self.update(dict(*args, **kwargs))
+
+    def __setitem__(self, key, value):
+        if not isinstance(value, Interaction):
+            value = Interaction.create(key, value)
+        self.__dict__[key] = value
+
+def is_valid_response_type(val):
+    types = get_class_vars(ResponseTypes)
+    if val in types:
+        return True
+    return False
+
+class ResponseMap(MessageOptionsMap):
+    def __setitem__(self, key, value):
+        assert is_valid_response_type(key), 'Invalid response type: %s' % key
         super(ResponseMap, self).__setitem__(key, value)
 
     def get_response(self, rtype):
         if rtype not in self:
             return ''
-        return self[rtype].get_prompt()
+        return self[rtype].get_message()
 
-class Question(Message):
+class Question(Interaction):
     repr_attrs = ['name']
 
-    def __init__(self, name, prompts, intent_actions=None, entity_actions=None, help=None, why=None):
-        super(Question, self).__init__(name, prompts)
-        self.intent_actions = intent_actions
-        self.help = help
-        self.why = why
+    @initializer
+    def __init__(self, name, messages, action=None, intent_actions=None, entity_actions=None, help=None, why=None):
+        if not isinstance(messages, MessageOptions):
+            self.messages = MessageOptions.create(messages)
+        if action and not isinstance(action, Action):
+            self.action = Action(action)
         if intent_actions:
             assert isinstance(intent_actions, ActionMap),\
                 'Invalid type for intent_actions, must be dict: %s' % type(intent_actions)
-        self.entity_actions = entity_actions
         if entity_actions:
             assert isinstance(entity_actions, ActionMap),\
                 'Invalid type for entity_actions, must be dict: %s' % type(entity_actions)
+        if not isinstance(help, MessageOptions):
+            self.help = MessageOptions.create(help)
+        if not isinstance(why, MessageOptions):
+            self.why = MessageOptions.create(why)
+
+    def get_help(self):
+        self.help.get_message()
+
+    def get_why(self):
+        self.why.get_message()
 
     def get_intent_actions(self):
         return self.intent_actions
@@ -223,25 +341,13 @@ class Question(Message):
     def get_entity_actions(self):
         return self.entity_actions
 
-    def get_help(self):
-        if not self.help:
-            return None
-        help = random.choice(self.help)
-        return help
-
-    def get_why(self):
-        if not self.why:
-            return None
-        why = random.choice(self.why)
-        return why
-
 class Slot(Question):
     repr_attrs = ['name']
 
     @classmethod
     def from_dict(cls, slot_name, slot_info, entity_handlers=None):
         assert isinstance(slot_info, dict), 'Invalid type for slot_info, must be dict: %s' % type(slot_info)
-        prompts = slot_info['prompts']
+        messages = slot_info['messages']
 
         follow_up_info = slot_info.get('follow_up', {})
         if not follow_up_info:
@@ -256,13 +362,13 @@ class Slot(Question):
         help = slot_info.get('help', None)
         why = slot_info.get('why', None)
 
-        return cls(slot_name, prompts, entity_handler_name=entity_handler_name, follow_up=follow_up,
+        return cls(slot_name, messages, entity_handler_name=entity_handler_name, follow_up=follow_up,
                    autofill=autofill, help=help, why=why)
 
-    def __init__(self, name, prompts, entity_handler_name=None, follow_up=None, autofill=None, help=None, why=None):
+    def __init__(self, name, messages, entity_handler_name=None, follow_up=None, autofill=None, help=None, why=None):
         # TODO: should slot be filled by an action? Allow overriding intent/entity actions for slots?
         entity_actions = ActionMap({name: Actions.NoAction})
-        super(Slot, self).__init__(name, prompts, entity_actions=entity_actions, help=help, why=why)
+        super(Slot, self).__init__(name, messages, entity_actions=entity_actions, help=help, why=why)
         if entity_handler_name:
             assert isinstance(entity_handler_name, str), 'Invalid entity handler: %s' % entity_handler_name
         self.entity_handler_name = entity_handler_name
@@ -271,10 +377,10 @@ class Slot(Question):
             assert isinstance(follow_up, FollowUp)
         self.autofill = autofill
 
-    def get_follow_up_prompt(self):
+    def get_follow_up_messages(self):
         if not self.follow_up:
             return None
-        return self.follow_up.get_prompt()
+        return self.follow_up.get_message()
 
     def get_follow_up_intent_actions(self):
         if not self.follow_up:
@@ -283,7 +389,7 @@ class Slot(Question):
 
     def copy(self):
         new_slot = Slot(self.name,
-                        copy.deepcopy(self.prompts),
+                        copy.deepcopy(self.messages),
                         entity_handler_name=self.entity_handler_name,
                         follow_up=copy.deepcopy(self.follow_up),
                         autofill=self.autofill,
@@ -319,7 +425,7 @@ class FollowUp(Question):
             follow_up_name = '%s_follow_up' % slot_name
             # If they provide the slot answer, process it and continue
             entity_actions = {slot_name: Actions.ReplaceSlot}
-            follow_up = cls(follow_up_name, follow_up_info['prompts'],
+            follow_up = cls(follow_up_name, follow_up_info['messages'],
                             intent_actions=ActionMap(follow_up_info.get('intent_actions', DEFAULT_FOLLOW_UP_ACTIONS)),
                             entity_actions=ActionMap(entity_actions),
                             help=follow_up_info.get('help', None),
@@ -343,10 +449,10 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
             self.responses.update(responses)
 
         if help:
-            self.help = Message.create('%s:help' % name, help)
+            self.help = MessageOptions.create(help)
 
         if why:
-            self.why = Message.create('%s:why' % name, why)
+            self.why = MessageOptions.create(why)
 
         self.slots = MessageGroup()
         if slots:
@@ -364,7 +470,7 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
     def get_slot_results_container(self):
         '''Creates a container to store slot results'''
         results = SlotResults()
-        for slot_name, slot in self.slots.items():
+        for slot_name in self.slots.keys():
             results[slot_name] = SlotResult(slot_name, None)
         return results
 
@@ -408,12 +514,12 @@ class Intent(PrintMixin, JSONMixin, MappingMixin):
     def get_help(self):
         if not self.help:
             return None
-        return self.help.get_prompt()
+        return self.help.get_message()
 
     def get_why(self):
         if not self.why:
             return None
-        return self.why.get_prompt()
+        return self.why.get_message()
 
 class IntentResult(PrintMixin, JSONMixin, MappingMixin):
     repr_attrs = ['name', 'score']
@@ -536,20 +642,20 @@ class FulfillmentResponse(PrintMixin, JSONMixin, MappingMixin):
     repr_attrs = ['status', 'response']
 
     @initializer
-    def __init__(self, name, status=None, status_reason=None, message=None, action=None):
+    def __init__(self, name, status=None, status_reason=None, interaction=None, action=None):
         assert status and isinstance(status, str), 'Invalid status: %s' % status
 
         if action and not isinstance(action, Action):
             self.action = Action(action)
 
-        if message:
-            if isinstance(message, str):
-                self.message = Message(name, [message])
-            elif isinstance(message, dict):
-                message['name'] = message.get('name', name)
-                self.message = Message.from_dict(message)
+        if interaction:
+            if isinstance(interaction, str):
+                self.interaction = Interaction(name, [interaction])
+            elif isinstance(interaction, dict):
+                interaction['name'] = interaction.get('name', name)
+                self.interaction = Interaction.from_dict(interaction)
             else:
-                assert False, 'Invalid message: %s' % message
+                assert False, 'Invalid interaction: %s' % interaction
 
     def success(self):
         if self.status.lower() == 'success':
