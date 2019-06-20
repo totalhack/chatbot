@@ -23,5 +23,10 @@ NLU_CONFIG = {
     'luis_subkey': '<my luis subkey>'
 }
 
+### Slack config
+SLACK_APP_BOT_MAP = {'<slack app id>': '<bot id>'}
+SLACK_SIGNING_SECRET = '<slack signing secret'
+SLACK_BOT_TOKEN = '<slack bot token>'
+
 ### Directory where bot config files live
 BOT_CONFIG_DIRECTORY = '/etc/config/chatbot/'

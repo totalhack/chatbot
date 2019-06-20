@@ -9,4 +9,8 @@ mysqlclient
 python-dateutil
 requests
 simplejson
+slackclient
+slackeventsapi
+git+git://github.com/totalhack/toolbox.git#egg=toolbox
 usaddress
+wheel

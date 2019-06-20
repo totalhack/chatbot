@@ -1,6 +1,6 @@
 import unittest
 
-from chatbot.utils import st, dbg
+from toolbox import st, dbg
 
 class TestBase(unittest.TestCase):
     DEBUG = False

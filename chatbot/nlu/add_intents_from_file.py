@@ -5,7 +5,7 @@ import climax
 from chatbot import app
 from chatbot.configs import load_bot_configs, get_bot_config, IntentConfigFileSchema, parse_schema_file
 from chatbot.core import get_nlu
-from chatbot.utils import st, dbg, cli, prompt_user
+from toolbox import st, dbg, cli, prompt_user
 
 load_bot_configs(app.config)
 

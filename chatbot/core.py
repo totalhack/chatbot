@@ -10,18 +10,18 @@ import requests
 import usaddress
 
 from chatbot.model import db, Fulfillments
-from chatbot.utils import (dbg,
-                           st,
-                           json,
-                           get_class_vars,
-                           string_has_format_args,
-                           get_string_format_args,
-                           import_object,
-                           OrderedDictPlus,
-                           PrintMixin,
-                           JSONMixin,
-                           MappingMixin,
-                           initializer)
+from toolbox import (dbg,
+                     st,
+                     json,
+                     get_class_vars,
+                     string_has_format_args,
+                     get_string_format_args,
+                     import_object,
+                     OrderedDictPlus,
+                     PrintMixin,
+                     JSONMixin,
+                     MappingMixin,
+                     initializer)
 
 CONVO_CACHE = None
 NLU_CACHE = None
@@ -119,6 +119,7 @@ class Message(PrintMixin, JSONMixin, MappingMixin):
     @initializer
     def __init__(self, value=None):
         self.validate(value)
+        self.value = self.clean(value)
 
     def get_message(self):
         return self
@@ -129,8 +130,11 @@ class Message(PrintMixin, JSONMixin, MappingMixin):
     def satisfied_by_context(self, context):
         raise NotImplementedError
 
-    def validate(self):
+    def validate(self, value):
         raise NotImplementedError
+
+    def clean(self, value):
+        return value
 
     @classmethod
     def create(cls, message):
@@ -163,6 +167,9 @@ class TextMessage(Message):
     def validate(self, value):
         assert isinstance(value, str), 'TextMessage value must be str type'
 
+    def clean(self, value):
+        return value.strip()
+
 class ButtonMessage(Message):
     def requires_context(self):
         format_args = get_string_format_args(self.value['label'])
@@ -180,6 +187,10 @@ class ButtonMessage(Message):
     def validate(self, value):
         assert isinstance(value, dict), 'ButtonMessage value must be dict type'
         assert 'label' in value, 'ButtonMessage must have a label'
+
+    def clean(self, value):
+        value['label'] = value['label'].strip()
+        return value
 
 class MessageOptions(PrintMixin, JSONMixin, MappingMixin):
     repr_attrs = ['messages']
@@ -857,13 +868,13 @@ def get_nlu_cache(app_config):
         return None
 
     if app_config['DEBUG']:
-        dbg('Initializing DiskCache for NLU', app_config=app_config)
+        dbg('Initializing DiskCache for NLU', config=app_config)
         cache_dir = app_config.get('NLU_DISK_CACHE_DIR', '/tmp')
         ttl = app_config.get('NLU_DISK_CACHE_TTL', DEFAULT_NLU_DISK_CACHE_TTL)
         NLU_CACHE = DiskCache(cache_dir, ttl=ttl)
         return NLU_CACHE
 
-    dbg('Initializing LRUCache for NLU', app_config=app_config)
+    dbg('Initializing LRUCache for NLU', config=app_config)
     nlu_size = app_config.get('NLU_CACHE_SIZE', DEFAULT_NLU_CACHE_SIZE)
     NLU_CACHE = LRUCache(nlu_size)
     return NLU_CACHE
@@ -873,7 +884,7 @@ def get_convo_cache(app_config):
     global CONVO_CACHE
     if CONVO_CACHE is not None:
         return CONVO_CACHE
-    dbg('Initializing TTLCache for conversations', app_config=app_config)
+    dbg('Initializing TTLCache for conversations', config=app_config)
     cache_size = app_config.get('CONVO_CACHE_SIZE', DEFAULT_CONVO_CACHE_SIZE)
     cache_ttl = app_config.get('CONVO_CACHE_TTL', DEFAULT_CONVO_CACHE_TTL)
     CONVO_CACHE = TTLCache(cache_size, cache_ttl)

@@ -5,8 +5,8 @@ import requests
 
 from chatbot import app
 from chatbot.configs import load_bot_configs, get_all_bot_configs
-from chatbot.utils import st, json, testcli
 from test_utils import TestBase, run_tests
+from toolbox import st, json, testcli
 
 load_bot_configs(app.config, load_tests=True)
 
@@ -74,7 +74,7 @@ class TestChatBot(TestBase, metaclass=TestChatBotMeta):
             resp = make_request(bot, input_data, convo_id=self.convo_id, intent_configs=intent_configs)
             data = resp.json(object_pairs_hook=OrderedDict)
             assert data['status'] == 'success', 'Error: %s' % data
-            print('\nBOT:', data['response'])
+            print('\nBOT:', data['value'])
 
             if not self.convo_id:
                 self.convo_id = data['conversation_id']

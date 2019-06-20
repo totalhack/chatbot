@@ -1,18 +1,86 @@
 """App server with chat() endpoint"""
 import traceback
 
-from flask import request
+from cachetools import TTLCache
+from flask import request, Response, current_app
+from slackclient import SlackClient
+from slackeventsapi import SlackEventAdapter
 
 from chatbot import app
 from chatbot.configs import load_bot_configs
 from chatbot.conversation import Conversation, Channel, Input, ErrorOutput, SuccessOutput
 from chatbot.core import Actions, CommonIntents, get_convo_cache, setup_caching
 from chatbot.model import db
-from chatbot.utils import dbg, warn, error, json, jsonr, st
+from chatbot.utils import dbg, jsonr
+from toolbox import warn, error, json, st
 
 db.init_app(app)
 load_bot_configs(app.config)
 setup_caching(app.config)
+
+slack_events_adapter = SlackEventAdapter(app.config['SLACK_SIGNING_SECRET'], endpoint="/slack/event", server=app)
+slack_client = SlackClient(app.config['SLACK_BOT_TOKEN'])
+
+# TODO: better home and configurable for production
+SLACK_CONVO_CACHE_SIZE = 1000
+SLACK_CONVO_CACHE_TTL = 60*60
+slack_convo_cache = TTLCache(SLACK_CONVO_CACHE_SIZE, SLACK_CONVO_CACHE_TTL)
+
+@slack_events_adapter.on("app_mention")
+def slack_app_mention(event_data):
+    dbg('App mention!')
+    dbg(event_data)
+
+@slack_events_adapter.on("message")
+def slack_message(event_data):
+    dbg('Message!')
+    dbg(event_data)
+
+    event = event_data["event"]
+    slack_app_id = event_data["api_app_id"]
+    slack_channel = event["channel"]
+    slack_channel_type = event["channel_type"]
+    slack_user = event.get("user", event.get('username', None))
+    # message = "Hello <@%s>! :tada:" % message["user"]
+
+    bot = app.config['SLACK_APP_BOT_MAP'].get(slack_app_id, None)
+    assert bot, 'Could not find bot mapped for slack app: %s' % slack_app_id
+
+    slack_convo_id = '%s:%s' % (slack_channel, slack_user)
+    convo_id = slack_convo_cache.get(slack_convo_id, None)
+    # TODO: ability to pass more channel-specific info to store
+    channel = Channel.create('slack')
+
+    if event.get("subtype") is None:
+        input = channel.format_input(event['text'], context=event)
+        output = converse(channel, bot, convo_id, input)
+        if not convo_id:
+            slack_convo_cache[slack_convo_id] = output['conversation_id']
+
+        dbg(output)
+        if output['status'] == 'error':
+            msg = 'An error occurred. Please try again later.'
+            slack_client.api_call("chat.postMessage", channel=slack_channel, text=msg)
+        else:
+            for msg in output['value']:
+                # TODO: change API call based on message type
+                slack_client.api_call("chat.postMessage", channel=slack_channel, text=msg['text'])
+
+@slack_events_adapter.on("error")
+def slack_error(err):
+    error(str(err))
+
+@app.route('/slack/message_action', methods=['POST'])
+def slack_message_action():
+    dbg('Message Action!')
+    data = request.get_json()
+    dbg(data)
+
+@app.route('/slack/message_options', methods=['POST'])
+def slack_message_options():
+    dbg('Message Options!')
+    data = request.get_json()
+    dbg(data)
 
 def converse(channel, bot, convo_id, input, bot_config=None):
     dbg('Conversation ID: %s / Bot: %s' % (convo_id, bot))

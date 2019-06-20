@@ -16,13 +16,13 @@ from chatbot.core import (NLU,
                           IntentResult,
                           Utterance,
                           get_nlu_cache)
-from chatbot.utils import (st,
-                           dbg,
-                           warn,
-                           parse_date,
-                           paged_call,
-                           paged_get,
-                           poll_call)
+from toolbox import (st,
+                     dbg,
+                     warn,
+                     parse_date,
+                     paged_call,
+                     paged_get,
+                     poll_call)
 
 PAGE_SIZE = 250
 RAW_INTENT_LIMIT = 10

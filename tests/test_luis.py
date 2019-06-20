@@ -11,8 +11,8 @@ from chatbot.core import (Application,
                           Utterance)
 from chatbot.configs import load_bot_configs
 from chatbot.nlu.luis import LUISNLU
-from chatbot.utils import testcli, climax
 from test_utils import run_tests
+from toolbox import testcli, climax
 
 load_bot_configs(app.config)
 

@@ -11,15 +11,15 @@ from chatbot.core import (Actions,
                           ResponseTypes,
                           Intent,
                           InteractionMap)
-from chatbot.utils import (dbg,
-                           error,
-                           json,
-                           st,
-                           initializer,
-                           dictmerge,
-                           get_class_vars,
-                           JSONMixin,
-                           MappingMixin)
+from toolbox import (dbg,
+                     error,
+                     json,
+                     st,
+                     initializer,
+                     dictmerge,
+                     get_class_vars,
+                     JSONMixin,
+                     MappingMixin)
 
 BOT_CONFIGS = {}
 COMMON_INTENT_CONFIGS = {}

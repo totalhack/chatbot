@@ -16,16 +16,16 @@ from chatbot.core import (Question,
                           ButtonMessage,
                           get_nlu)
 from chatbot.model import db, Transactions, Conversations, SaveMixin
-from chatbot.utils import (PrintMixin,
-                           JSONMixin,
-                           MappingMixin,
-                           OrderedDictPlus,
-                           initializer,
-                           json,
-                           dbg,
-                           warn,
-                           error,
-                           st)
+from toolbox import (PrintMixin,
+                     JSONMixin,
+                     MappingMixin,
+                     OrderedDictPlus,
+                     initializer,
+                     json,
+                     dbg,
+                     warn,
+                     error,
+                     st)
 
 class UnsupportedMessageException(Exception):
     pass
@@ -46,17 +46,23 @@ class Channel(PrintMixin, JSONMixin):
         raise NotImplementedError
 
     @classmethod
+    def format_input(cls, input, context=None):
+        raise NotImplementedError
+
+    @classmethod
     def format_output(cls, output, context=None):
         raise NotImplementedError
 
     @classmethod
-    def create(cls, name):
-        name = name.lower()
-        if name == 'text':
+    def create(cls, channel):
+        if isinstance(channel, cls):
+            return channel
+        channel = channel.lower()
+        if channel == 'text':
             return TextChannel()
-        elif name == 'slack':
+        elif channel == 'slack':
             return SlackChannel()
-        assert False, 'Unsupported channel name: %s' % name
+        assert False, 'Unsupported channel: %s' % channel
 
 class TextChannel(Channel):
     @classmethod
@@ -70,8 +76,8 @@ class TextChannel(Channel):
         if not cls.message_supported(message):
             raise UnsupportedMessageException(message)
 
-        value = message.value.strip()
-
+        value = message.value
+        context = context or {}
         if message.requires_context():
             if not context:
                 raise InvalidMessageContextException('No context available for message with format args: %s' % value)
@@ -80,14 +86,16 @@ class TextChannel(Channel):
             except KeyError as e:
                 raise InvalidMessageContextException('Invalid message template or context, '
                                                      'could not find %s in context' % str(e))
-
         return value
+
+    @classmethod
+    def format_input(cls, input, context=None):
+        return input
 
     @classmethod
     def format_output(cls, output, context=None):
         formatted_msgs = []
-        if not context:
-            context = {}
+        context = context or {}
         for msg in output.values():
             formatted = cls.format_message(msg, context=context)
             if not (formatted.endswith('.') or formatted.endswith('?') or formatted.endswith('!')):
@@ -106,11 +114,26 @@ class SlackChannel(Channel):
     def format_message(cls, message, context=None):
         if not cls.message_supported(message):
             raise UnsupportedMessageException(message)
-        assert False
+
+        if isinstance(message, TextMessage):
+            text = TextChannel.format_message(message, context=context)
+            return {'text': text}
+
+        assert False, 'Message not yet supported: %s' % message
+
+    @classmethod
+    def format_input(cls, input, context=None):
+        input = input.replace('<@%s>' % context.get('user', ''), '')
+        return input
 
     @classmethod
     def format_output(cls, output, context=None):
-        raise NotImplementedError
+        formatted_msgs = []
+        context = context or {}
+        for msg in output.values():
+            formatted = cls.format_message(msg, context=context)
+            formatted_msgs.append(formatted)
+        return formatted_msgs
 
 class Input(PrintMixin, JSONMixin):
     repr_attrs = ['type', 'value']
@@ -139,20 +162,20 @@ class Input(PrintMixin, JSONMixin):
         assert self.type in self.types, 'Invalid input type: %s' % self.type
 
 class Output(PrintMixin, JSONMixin, MappingMixin):
-    repr_attrs = ['status', 'response']
+    repr_attrs = ['status', 'value']
 
     @initializer
-    def __init__(self, status, response):
-        pass
+    def __init__(self, value):
+        self.status = None
 
 class ErrorOutput(Output):
     @initializer
-    def __init__(self, response, **kwargs):
+    def __init__(self, value, **kwargs):
         self.status = 'error'
 
 class SuccessOutput(Output):
     @initializer
-    def __init__(self, response, **kwargs):
+    def __init__(self, value, **kwargs):
         self.status = 'success'
 
 class Transaction(JSONMixin, SaveMixin):
